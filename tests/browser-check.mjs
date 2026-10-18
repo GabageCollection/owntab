@@ -267,9 +267,37 @@ try {
   await page.getByRole('button', { name: '其他书签', exact: true }).click();
   await page.getByRole('heading', { name: '留一点空间，给新的发现' }).waitFor();
   assert.equal(await page.locator('.grid').count(), 0);
+  // V1.1 smoke: palette, view toggle, maintenance, pin, drag-into-folder.
+  await page.getByRole('button', { name: '书签栏', exact: true }).click();
+  await page.waitForSelector('.bookmark-card');
+  await page.keyboard.press('/');
+  await page.locator('.palette-input').waitFor();
+  await page.keyboard.type('常用网站 2');
+  await page.waitForSelector('.palette-item');
+  assert((await page.locator('.palette-item-title').first().innerText()).includes('常用网站 2'), 'palette filters bookmarks');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.palette-body').count(), 0, 'palette closes on Escape');
+  await page.getByRole('button', { name: '切换为列表视图' }).click();
+  await page.locator('.grid.list-view').first().waitFor();
+  assert.equal((await page.evaluate(() => window.__getSettings())).view, 'list', 'view persisted');
+  await page.getByRole('button', { name: '切换为网格视图' }).click();
+  await page.waitForSelector('.grid:not(.list-view)');
+  await page.getByRole('button', { name: '书签维护' }).click();
+  await page.locator('.maintenance-body').waitFor();
+  await page.getByRole('tab', { name: '链接检查' }).click();
+  assert.equal(await page.getByRole('button', { name: '开始检查' }).count(), 1, 'link check available');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.maintenance-body', { state: 'detached' });
+  const card = page.locator('.bookmark-card').first();
+  await card.hover();
+  await card.getByRole('button', { name: /操作：/ }).click();
+  await page.getByRole('menuitem', { name: '固定到顶部' }).click();
+  await page.waitForSelector('.pinned-item');
+  assert((await page.evaluate(() => window.__getSettings())).pinnedIds.length === 1, 'pin persisted');
+
   assert.deepEqual(errors, []);
   assert.deepEqual(focusFailures, [], 'menu/dialog focus restoration failures');
-  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder. Mock Chrome API used.');
+  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin smoke. Mock Chrome API used.');
 } finally {
   await browser?.close();
   await new Promise(done => server.close(done));

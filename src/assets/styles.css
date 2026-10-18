@@ -185,10 +185,11 @@ svg { flex-shrink: 0; }
 .favicon, .folder-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 20px; height: 20px; object-fit: contain; }
 .favicon { border-radius: var(--radius-full); font-size: var(--text-sm); font-weight: 600; background: var(--favicon-bg, var(--accent-subtle)); color: var(--favicon-text, var(--accent-text)); }
 [data-theme='dark'] .favicon { background: color-mix(in srgb, var(--favicon-bg) 20%, transparent); color: color-mix(in srgb, var(--favicon-bg) 85%, white); }
-.bookmark-card .favicon { align-self: flex-start; margin-top: 3px; }
+.bookmark-card .card-link { align-items: flex-start; padding-top: 9px; padding-right: 40px; }
+.bookmark-card .favicon { align-self: flex-start; margin-top: 2px; }
 .folder-icon { color: var(--accent-text); }
-.more-button { position: absolute; top: 6px; right: 4px; width: 28px; height: 28px; font-size: var(--text-lg); opacity: 0; }
-.folder-card .more-button { top: 9px; }
+.more-button { position: absolute; top: 6px; right: 4px; width: 18px; height: 18px; font-size: var(--text-lg); line-height: 1; opacity: 0; }
+.folder-card .more-button { top: 3px; }
 .bookmark-card:hover .more-button, .folder-card:hover .more-button, .bookmark-card:focus-within .more-button, .folder-card:focus-within .more-button, .more-button[aria-expanded='true'] { opacity: 1; }
 @media (hover: hover) {
   .bookmark-card:hover, .folder-card:hover { transform: translateY(-2px); border-color: var(--border-hover); box-shadow: var(--shadow-md); }
@@ -314,23 +315,24 @@ body { background: radial-gradient(ellipse at 50% -220px, rgb(91 174 151 / 11%),
 .folder-grid + .grid { margin-top: 18px; }
 .bookmark-card, .folder-card { border-color: var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .folder-card { background: color-mix(in srgb, var(--accent-subtle) 40%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 18%, var(--border)); }
-.bookmark-card { height: 82px; }
-.folder-card { height: 58px; }
+.bookmark-card { height: 72px; }
+.folder-card { height: 48px; }
 .card-link { gap: 11px; padding: 12px 40px 12px 14px; }
+.bookmark-card .card-link { align-items: flex-start; padding-top: 12px; padding-right: 40px; }
 .card-title { font-size: 13px; font-weight: 550; line-height: 1.45; }
 .card-domain, .folder-card .count { margin-top: 4px; color: var(--text-secondary); font-size: 11px; }
 .folder-card .card-title { font-size: 13px; font-weight: 600; }
 .favicon, .folder-icon { width: 30px; height: 30px; }
 .favicon { border: 1px solid rgb(32 42 40 / 6%); border-radius: 9px; }
 .favicon img { width: 20px; height: 20px; }
-.bookmark-card .favicon { align-self: center; margin-top: 0; }
+.bookmark-card .favicon { margin-top: 0; }
 .folder-icon { width: 19px; height: 19px; margin-inline: 5px; color: #d49b39; }
 .folder-card .card-link { padding-left: 11px; }
-.more-button { top: 8px; right: 7px; border: 0; box-shadow: none; opacity: 0; }
-.folder-card .more-button { top: 14px; }
+.more-button { top: 6px; right: 4px; width: 18px; height: 18px; line-height: 1; }
+.folder-card .more-button { top: 3px; }
 @media (hover: hover) { .bookmark-card:hover, .folder-card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); box-shadow: var(--shadow-md); } }
-.skeleton { height: 82px; border-radius: 12px; }
-.folder-grid .skeleton { height: 58px; }
+.skeleton { height: 72px; border-radius: 12px; }
+.folder-grid .skeleton { height: 48px; }
 .empty-state { min-height: 260px; gap: 12px; }
 .empty-state > svg, .empty-state > .folder-icon { width: 42px; height: 42px; padding: 9px; border-radius: 12px; background: var(--accent-subtle); color: var(--accent-text); }
 .empty-state h1, .empty-state h2, .empty-state h3 { color: var(--text-primary); font-size: 18px; }
@@ -345,7 +347,7 @@ body { background: radial-gradient(ellipse at 50% -220px, rgb(91 174 151 / 11%),
 @media (max-width: 599px) {
   .app-shell { padding-inline: 16px; } .topbar { height: 64px; margin-bottom: 22px; }
   .grid, .folder-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-  .bookmark-card { height: 78px; } .folder-card { height: 56px; }
+  .bookmark-card { height: 72px; } .folder-card { height: 48px; }
   .card-link { gap: 8px; padding-left: 10px; } .favicon { width: 27px; height: 27px; }
   .content-toolbar { gap: 10px; } .toolbar-actions { gap: 7px; } .toolbar-actions .button { min-height: 38px; padding-inline: 11px; }
 }
@@ -369,3 +371,92 @@ body { background: radial-gradient(ellipse at 50% -220px, rgb(91 174 151 / 11%),
   :focus-visible { outline-color: Highlight; }
   .more-button { opacity: 1; }
 }
+
+/* ——— V1.1 additions: search, pinned bar, clock, list view, drag & drop, maintenance ——— */
+
+/* Search bar */
+.search-bar { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; margin-bottom: var(--space-5); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.search-bar:focus-within { border-color: var(--focus); }
+.search-bar > svg { width: 18px; height: 18px; color: var(--muted-text); }
+.search-bar input { flex: 1; min-width: 0; height: 36px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font-size: var(--text-md); outline: none; }
+.search-bar input::placeholder { color: var(--text-tertiary); }
+.search-bar input::-webkit-search-cancel-button { display: none; }
+.search-bar .button { min-height: 32px; }
+
+/* Pinned bar */
+.pinned-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+.pinned-item { position: relative; display: inline-flex; }
+.pinned-link { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 200px; min-height: 40px; padding: 6px 26px 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); transition: border-color var(--duration-fast), transform var(--duration-fast); }
+@media (hover: hover) { .pinned-link:hover { transform: translateY(-2px); border-color: var(--border-hover); } }
+.pinned-favicon { width: 26px; height: 26px; border-radius: 7px; }
+.pinned-favicon img { width: 16px; height: 16px; }
+.pinned-title { overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pinned-remove { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; opacity: 0; transition: opacity var(--duration-fast); }
+.pinned-remove svg { width: 12px; height: 12px; }
+.pinned-item:hover .pinned-remove, .pinned-remove:focus-visible { opacity: 1; }
+
+/* Clock */
+.clock { display: inline-flex; align-items: baseline; gap: var(--space-2); }
+.clock-time { font-size: var(--text-xl); font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.clock-date { font-size: var(--text-sm); }
+
+/* Search palette */
+.palette-body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.palette-input { min-height: 40px; padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text-primary); font-size: var(--text-md); outline: none; }
+.palette-input:focus { border-color: var(--focus); }
+.palette-input::-webkit-search-cancel-button { display: none; }
+.palette-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.palette-item { position: relative; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+.palette-item:last-child { border-bottom: 0; }
+.palette-item.active { background: var(--accent-subtle); }
+.palette-item-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.palette-item-title { overflow: hidden; font-size: var(--text-md); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.palette-item-url { overflow: hidden; font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.palette-item-path { max-width: 140px; overflow: hidden; flex-shrink: 0; font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.palette-locate { width: 26px; height: 26px; font-size: 14px; }
+.palette-hint { margin: 0; font-size: var(--text-xs); }
+.palette-empty { padding: var(--space-5) var(--space-3); text-align: center; }
+mark { padding: 0 1px; border-radius: 2px; background: var(--accent-subtle); color: var(--accent-text); }
+
+/* List view */
+.grid.list-view { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.grid.list-view .bookmark-card, .grid.list-view .folder-card { height: auto; min-height: 44px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; box-shadow: none; }
+.grid.list-view .bookmark-card:last-child, .grid.list-view .folder-card:last-child { border-bottom: 0; }
+.grid.list-view .card-link { gap: var(--space-2); padding: 8px 40px 8px var(--space-3); }
+.grid.list-view .card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-line-clamp: 1; display: block; }
+.grid.list-view .card-domain { display: inline; margin-left: var(--space-2); }
+.grid.list-view .card-copy { display: flex; align-items: baseline; min-width: 0; }
+.grid.list-view .card-copy .card-title { flex-shrink: 1; }
+.grid.list-view .favicon, .grid.list-view .folder-icon { width: 22px; height: 22px; margin: 0; }
+.grid.list-view .favicon img { width: 14px; height: 14px; }
+.grid.list-view .folder-card .folder-icon { width: 16px; height: 16px; margin-inline: 3px; }
+@media (hover: hover) { .grid.list-view .bookmark-card:hover, .grid.list-view .folder-card:hover { transform: none; background: var(--hover-bg); box-shadow: none; } }
+
+/* Drag & drop */
+.bookmark-card.dragging, .folder-card.dragging { opacity: 0.45; }
+.bookmark-card.drag-before { box-shadow: inset 3px 0 0 var(--accent); }
+.bookmark-card.drag-after { box-shadow: inset -3px 0 0 var(--accent); }
+.folder-card.drop-target { border-color: var(--accent); background: var(--accent-subtle); }
+
+/* Maintenance panel */
+.maintenance-body { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.maintenance-tabs { margin-bottom: 0; }
+.maintenance-list { display: flex; flex-direction: column; gap: var(--space-2); max-height: 320px; overflow-y: auto; }
+.maintenance-group { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.maintenance-url { margin: 0; overflow: hidden; font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.maintenance-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.maintenance-title { flex: 1; overflow: hidden; min-width: 0; font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }
+.maintenance-path { max-width: 120px; overflow: hidden; font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.maintenance-row .button { min-height: 28px; padding: 2px 8px; font-size: var(--text-sm); }
+.maintenance-actions { display: flex; align-items: center; gap: var(--space-3); }
+.maintenance-progress { height: 4px; border-radius: var(--radius-full); background: var(--hover-bg); overflow: hidden; }
+.maintenance-progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width var(--duration-normal); }
+.maintenance-badge { flex-shrink: 0; padding: 1px 8px; border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: 500; }
+.maintenance-badge[data-status='ok'] { background: var(--accent-subtle); color: var(--success-text); }
+.maintenance-badge[data-status='broken'] { background: var(--danger-subtle); color: var(--danger-text); }
+.maintenance-badge[data-status='unknown'] { background: var(--hover-bg); color: var(--muted-text); }
+.maintenance-body > .muted { margin: 0; }
+
+/* Toolbar view toggle */
+.toolbar-actions .icon-button[aria-pressed='true'] { background: var(--accent-subtle); color: var(--accent-text); }
+.toolbar-left { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }

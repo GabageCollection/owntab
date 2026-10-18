@@ -6,7 +6,7 @@ const schema = z.discriminatedUnion('action', [
  z.object({action:z.literal('tree')}), z.object({action:z.literal('children'),id}),
  z.object({action:z.literal('create'),parentId:id,title:titleSchema,url:urlSchema.optional()}),
  z.object({action:z.literal('update'),id,title:titleSchema,url:urlSchema.optional()}),
- z.object({action:z.literal('move'),id,parentId:id}), z.object({action:z.literal('remove'),id})
+ z.object({action:z.literal('move'),id,parentId:id,index:z.number().int().min(0).max(10000).optional()}), z.object({action:z.literal('remove'),id})
 ]);
 export async function handleRequest(raw: Request, api: typeof chrome.bookmarks): Promise<Reply> {
  try {
@@ -26,7 +26,7 @@ export async function handleRequest(raw: Request, api: typeof chrome.bookmarks):
   if (r.action === 'move') {
    folder(r.parentId);
    if (findNode([node],r.parentId)) throw new Error('不能移动到自身或子文件夹中');
-   return {ok:true,data:await api.move(r.id,{parentId:r.parentId})};
+   return {ok:true,data:await api.move(r.id,{parentId:r.parentId,...(r.index !== undefined ? {index:r.index} : {})})};
   }
   if (node.url) await api.remove(r.id); else await api.removeTree(r.id);
   return {ok:true,data:null};
