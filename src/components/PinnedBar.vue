@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import Icon from './Icon.vue';
-import { domain, faviconColor, type Node } from '../lib/model';
+import { domain, faviconColor, safeHref, type Node } from '../lib/model';
 
 const props = defineProps<{ nodes: Node[]; newTab: boolean }>();
-const emit = defineEmits<{ unpin: [id: string]; open: [node: Node] }>();
+const emit = defineEmits<{ unpin: [id: string]; open: [node: Node, mode: 'app' | 'native'] }>();
 const failed = ref(new Set<string>());
 watch(() => props.nodes, () => failed.value = new Set());
 function favicon(node: Node) {
@@ -16,14 +16,19 @@ function favicon(node: Node) {
     return url.href;
   } catch { return ''; }
 }
-function safeUrl(node: Node) { try { const url = new URL(node.url!); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; } }
+function safeUrl(node: Node) { return safeHref(node.url); }
 const colored = computed(() => props.nodes.map(node => { const host = domain(node.url); return { node, host, colors: faviconColor(host), url: safeUrl(node) }; }));
+function onClick(event: MouseEvent, node: Node) {
+  const plain = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+  if (plain) { event.preventDefault(); emit('open', node, 'app'); return; }
+  emit('open', node, 'native');
+}
 </script>
 
 <template>
   <section v-if="nodes.length" class="pinned-bar" aria-label="固定书签">
     <span v-for="item in colored" :key="item.node.id" class="pinned-item">
-      <a class="pinned-link" :href="item.url" :target="newTab ? '_blank' : undefined" rel="noopener noreferrer" :title="item.node.url" @click="emit('open', item.node)">
+      <a class="pinned-link" :href="item.url" :target="newTab ? '_blank' : undefined" rel="noopener noreferrer" :title="item.node.url" @click="onClick($event, item.node)">
         <span class="favicon pinned-favicon" :style="{'--favicon-bg': item.colors[0], '--favicon-text': item.colors[1]}">
           <img v-if="favicon(item.node) && !failed.has(item.node.id)" :src="favicon(item.node)" alt="" width="20" height="20" @error="failed = new Set([...failed, item.node.id])">
           <span v-else>{{ item.host.charAt(0).toUpperCase() || '?' }}</span>

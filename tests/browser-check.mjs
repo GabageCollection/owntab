@@ -21,6 +21,13 @@ try {
   const page = await browser.newPage({ colorScheme: 'dark', reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  // External links resolve to a local stub so navigation stays offline.
+  await page.route('**://example.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>stub</title>' }));
+  // The mock storage lives in Node so it survives navigation to another origin,
+  // matching the cross-origin behavior of the real chrome.storage.local.
+  const mockState = { settings: { theme: 'light', rootId: '1', density: 'comfortable', openInNewTab: false }, recent: [], tags: {} };
+  await page.exposeFunction('__owntabRead', () => JSON.parse(JSON.stringify(mockState)));
+  await page.exposeFunction('__owntabWrite', next => { Object.assign(mockState, JSON.parse(JSON.stringify(next))); });
   await page.addInitScript(() => {
     let count = 20;
     let settings = { theme: 'light', rootId: '1', density: 'comfortable', openInNewTab: false };
@@ -38,7 +45,8 @@ try {
       { id: '14', parentId: '1', title: '其他资源', children: [] },
       ...Array.from({ length: count }, (_, i) => ({
         id: String(20 + i), parentId: '1', title: i === 0 ? longTitle : '常用网站 ' + (i + 1),
-        url: i === 0 ? 'https://' + 'very-long-hostname-'.repeat(3) + 'example.com/path' : 'https://example.com/path/' + i,
+        // Two entries share a URL so the duplicate-detection panel has data.
+        url: i === 0 ? 'https://' + 'very-long-hostname-'.repeat(3) + 'example.com/path' : 'https://example.com/path/' + (i === 2 ? 1 : i),
       })),
     ];
     const tree = () => [{ id: '0', title: '', children: [
@@ -85,12 +93,18 @@ try {
       },
       storage: {
         local: {
-          get: async () => { window.__storageGets++; return { settings: { ...settings }, recent: [...recent], tags: { ...tags } }; },
+          get: async () => {
+            window.__storageGets++;
+            const saved = await window.__owntabRead();
+            settings = saved.settings; recent = saved.recent; tags = saved.tags;
+            return { settings: { ...settings }, recent: [...recent], tags: { ...tags } };
+          },
           set: async value => {
             if (window.__failStorage) throw Error('模拟存储失败');
             if (value.settings) settings = { ...value.settings };
             if (value.recent) recent = [...value.recent];
             if (value.tags) tags = { ...value.tags };
+            await window.__owntabWrite({ settings, recent, tags });
           },
         },
         onChanged: { addListener: () => {}, removeListener: () => {} },
@@ -315,14 +329,39 @@ try {
   await page.getByRole('dialog', { name: '最近使用', exact: true }).waitFor();
   assert((await page.locator('dialog').innerText()).includes('打开过的书签会出现在这里'), 'recent empty state');
   await page.keyboard.press('Escape');
+  // A plain card click must persist the bookmark in the recent list before navigating.
+  await page.locator('.bookmark-card .card-link').first().click();
+  await page.waitForTimeout(200);
+  assert.equal(mockState.recent.length, 1, 'recent recorded on card click');
+  await page.goBack();
+  await page.locator('.bookmark-card').first().waitFor();
+  await page.getByRole('button', { name: '最近使用', exact: true }).click();
+  await page.getByRole('dialog', { name: '最近使用', exact: true }).waitFor();
+  assert.equal(await page.locator('.recent-row').count(), 1, 'recent panel lists the opened bookmark');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('/');
   await page.locator('.palette-input').fill('设计资源');
   await page.waitForSelector('.palette-group-label');
   assert((await page.locator('.palette-group-label').allInnerTexts()).includes('文件夹'), 'palette groups folders');
   await page.keyboard.press('Escape');
   await page.keyboard.press('/');
+  await page.locator('.palette-input').fill('常用网站 2');
+  await page.waitForSelector('.palette-item');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('/');
   await page.locator('.palette-input').fill('zzz-no-match');
   await page.getByRole('button', { name: '在网页中搜索', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  // Maintenance deletions must go through the shared confirmation dialog.
+  await page.getByRole('button', { name: '书签维护' }).click();
+  await page.locator('.maintenance-body').waitFor();
+  const maintenanceDelete = page.locator('.maintenance-row .button.danger').first();
+  assert.equal(await maintenanceDelete.count(), 1, 'maintenance panel offers a delete action');
+  await maintenanceDelete.click();
+  await page.getByRole('dialog', { name: '删除确认', exact: true }).waitFor();
+  assert((await page.locator('dialog').innerText()).includes('此操作不可撤销'), 'maintenance delete asks for confirmation');
+  await page.getByRole('button', { name: '确认删除', exact: true }).click();
+  await page.locator('.maintenance-body').waitFor();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const downloadPromise = page.waitForEvent('download');
@@ -338,7 +377,7 @@ try {
 
   assert.deepEqual(errors, []);
   assert.deepEqual(focusFailures, [], 'menu/dialog focus restoration failures');
-  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin/tags/recent/search/settings-transfer smoke. Mock Chrome API used.');
+  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin/tags/recent/search/settings-transfer smoke; recent recorded on card click; maintenance delete confirmation. Mock Chrome API used.');
 } finally {
   await browser?.close();
   await new Promise(done => server.close(done));

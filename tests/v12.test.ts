@@ -9,6 +9,7 @@ import {
   settingsFromExport,
   settingsSchema,
   settingsToExport,
+  toPlain,
   type Node,
   type RecentEntry,
 } from '../src/lib/model';
@@ -78,5 +79,21 @@ describe('settings import and export', () => {
 
   it('enforces the pinned bookmark limit', () => {
     expect(pinnedSchema.safeParse(Array.from({ length: 25 }, (_, index) => String(index))).success).toBe(false);
+  });
+});
+
+describe('toPlain', () => {
+  it('converts a reactive proxy into a plain array that Chrome can store', () => {
+    // Chrome's storage API serializes proxies as {"0": ...} objects.
+    const target = [{ id: 'a', openedAt: 1 }];
+    const proxied = new Proxy(target, { get: (t, p, r) => Reflect.get(t, p, r) });
+    const plain = toPlain(proxied);
+    expect(Array.isArray(plain)).toBe(true);
+    expect(plain).toEqual([{ id: 'a', openedAt: 1 }]);
+    expect(JSON.stringify(plain)).toBe('[{"id":"a","openedAt":1}]');
+  });
+
+  it('keeps plain objects untouched in shape', () => {
+    expect(toPlain({ a: ['x'] })).toEqual({ a: ['x'] });
   });
 });

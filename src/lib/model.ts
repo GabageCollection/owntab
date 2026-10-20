@@ -45,9 +45,14 @@ export function domain(url = ''): string {
   const hostWithPort = /^[^/?#\s:]+:\d+(?:[/?#]|$)/.test(value);
   try {
     const parsed = new URL(value);
-    if (['javascript:', 'data:', 'about:', 'file:'].includes(parsed.protocol)) return '';
-    if (parsed.hostname) return parsed.hostname;
-    if (!hostWithPort) return '';
+    const isWeb = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    if (isWeb) {
+      if (parsed.hostname) return parsed.hostname;
+      if (!hostWithPort) return '';
+    } else if (parsed.hostname) {
+      // chrome:, ftp:, file:, javascript:, data: and friends stay neutral.
+      return '';
+    }
   } catch {
     // Only plausible schemeless hosts may use the fallback below.
   }
@@ -65,6 +70,16 @@ export function domain(url = ''): string {
     return '';
   }
 }
+
+/** Only web URLs are openable from an extension page. */
+export function safeHref(url = ''): string | undefined {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
 export const palette = [['#DBEAFE','#1E40AF'],['#D1FAE5','#065F46'],['#FED7AA','#9A3412'],['#E9D5FF','#6B21A8'],['#FBCFE8','#9D174D'],['#CCFBF1','#115E59']];
 export function faviconColor(host: string) { let hash = 0; for (const c of host.toLowerCase()) hash = (hash * 31 + c.charCodeAt(0)) >>> 0; return palette[hash % palette.length]; }
 export function findNode(tree: Node[], id: string): Node | undefined { for (const n of tree) { if (n.id === id) return n; const found = findNode(n.children ?? [], id); if (found) return found; } }
@@ -74,6 +89,9 @@ export function folderPath(tree: Node[], id: string): Node[] {
   let node = findNode(tree, id);
   while (node && node.id !== '0') { path.unshift(node); node = node.parentId ? findNode(tree, node.parentId) : undefined; }
   return path;
+}
+export function pathLabels(tree: Node[], id: string): string {
+  return folderPath(tree, id).map(node => node.title).filter(Boolean).join(' / ');
 }
 export function flattenBookmarks(tree: Node[], out: Node[] = []): Node[] {
   for (const node of tree) {
@@ -92,15 +110,24 @@ export function scoreQuery(title: string, url: string, host: string, query: stri
     if (field.startsWith(q)) return 1;
     if (field.includes(q)) return 2;
   }
-  let cursor = 0;
+  // Subsequence match: the query letters must appear in order, not just share a first letter.
   for (const field of fields) {
-    let index = field.indexOf(q[0]);
-    while (index !== -1) {
-      if (index >= cursor) return 3 + index;
-      index = field.indexOf(q[0], index + 1);
-    }
+    const index = subsequenceIndex(field, q);
+    if (index >= 0) return 3 + Math.min(index, 50);
   }
   return undefined;
+}
+function subsequenceIndex(field: string, query: string): number {
+  if (!field) return -1;
+  const first = field.indexOf(query[0]);
+  if (first === -1) return -1;
+  let cursor = first + 1;
+  for (let i = 1; i < query.length; i++) {
+    const next = field.indexOf(query[i], cursor);
+    if (next === -1) return -1;
+    cursor = next + 1;
+  }
+  return first;
 }
 export interface DuplicateGroup { url: string; nodes: { node: Node; path: string }[] }
 export function duplicateGroups(tree: Node[], limit = 200): DuplicateGroup[] {
@@ -108,7 +135,7 @@ export function duplicateGroups(tree: Node[], limit = 200): DuplicateGroup[] {
   function walk(branch: Node[], trail: string[]) {
     for (const node of branch) {
       if (node.url && /^https?:/i.test(node.url)) {
-        const key = node.url.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
+        const key = duplicateKey(node.url);
         const group = byUrl.get(key) ?? { url: node.url, nodes: [] };
         group.nodes.push({ node, path: trail.join(' / ') || '根目录' });
         byUrl.set(key, group);
@@ -119,8 +146,52 @@ export function duplicateGroups(tree: Node[], limit = 200): DuplicateGroup[] {
   walk(tree, []);
   return [...byUrl.values()].filter(group => group.nodes.length > 1).slice(0, limit);
 }
+/** Normalize scheme and host only: path and query stay case-sensitive. */
+export function duplicateKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.host.toLowerCase();
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return `${parsed.protocol}//${host}${path}${parsed.search}`;
+  } catch {
+    return url.replace(/#.*$/, '').replace(/\/+$/, '');
+  }
+}
+export interface IndexEntry {
+  node: Node;
+  host: string;
+  path: string;
+  kind: 'bookmark' | 'folder';
+  tags: string[];
+}
+/** Flatten the bookmark tree once, carrying folder paths along the way. */
+export function buildIndex(tree: Node[], tagMap: TagMap = {}): IndexEntry[] {
+  const entries: IndexEntry[] = [];
+  const walk = (nodes: Node[], trail: string[]) => {
+    for (const node of nodes) {
+      entries.push({
+        node,
+        host: node.url ? domain(node.url) : '',
+        path: trail.join(' / '),
+        kind: node.url ? 'bookmark' : 'folder',
+        tags: tagMap[node.id] ?? [],
+      });
+      if (node.children?.length) walk(node.children, node.title ? [...trail, node.title] : trail);
+    }
+  };
+  walk(tree, []);
+  return entries;
+}
 export function folderChoices(tree: Node[], excluded?: string, depth = 0): { node: Node; depth: number }[] { return tree.flatMap(n => n.url || n.id === excluded ? [] : [{node:n,depth}, ...folderChoices(n.children ?? [], excluded, depth + 1)]); }
 export function messageError(e: unknown): string { return e instanceof z.ZodError ? e.issues[0].message : e instanceof Error ? e.message : '操作失败，请重试'; }
+
+/**
+ * Chrome's storage API serializes Vue reactive proxies as plain objects,
+ * so arrays would be stored as {"0": ...}. Always write plain JSON values.
+ */
+export function toPlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 export function recordRecent(entries: RecentEntry[], id: string, openedAt = Date.now()): RecentEntry[] {
   return [{ id, openedAt }, ...entries.filter(entry => entry.id !== id)].slice(0, 50);

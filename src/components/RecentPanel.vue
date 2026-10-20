@@ -2,14 +2,14 @@
 import { computed } from 'vue';
 import Modal from './Modal.vue';
 import ModalActions from './ModalActions.vue';
-import { domain, folderPath, recentNodes, type Node, type RecentEntry } from '../lib/model';
+import { domain, pathLabels, recentNodes, type Node, type RecentEntry } from '../lib/model';
 
-const props = defineProps<{ tree: Node[]; entries: RecentEntry[]; newTab: boolean }>();
+const props = defineProps<{ tree: Node[]; entries: RecentEntry[] }>();
 const emit = defineEmits<{ close: []; open: [node: Node]; navigate: [id: string] }>();
 const items = computed(() => recentNodes(props.tree, props.entries).map(item => ({
   ...item,
   host: domain(item.node.url),
-  path: folderPath(props.tree, item.node.parentId ?? '').map(node => node.title).filter(Boolean).join(' / '),
+  path: pathLabels(props.tree, item.node.parentId ?? ''),
 })));
 
 function relative(timestamp: number) {

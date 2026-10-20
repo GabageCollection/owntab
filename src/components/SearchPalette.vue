@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import Modal from './Modal.vue';
-import { domain, folderPath, scoreQuery, searchUrl, type Node, type TagMap } from '../lib/model';
+import { buildIndex, scoreQuery, searchUrl, type Node, type TagMap } from '../lib/model';
 
 const props = defineProps<{ tree: Node[]; pinnedIds?: string[]; tags?: TagMap; engineId?: string; newTab?: boolean; initialQuery?: string }>();
 const emit = defineEmits<{ close: []; navigate: [id: string]; open: [node: Node] }>();
@@ -21,29 +21,28 @@ const active = ref(0);
 const input = ref<HTMLInputElement>();
 const list = ref<HTMLElement>();
 
+// The index is rebuilt only when the tree or tags change, not on every keystroke.
+const index = computed(() => buildIndex(props.tree, props.tags ?? {}));
+
 const groups = computed(() => {
   const q = query.value.trim();
   if (!q) return { pinned: [] as Result[], bookmarks: [] as Result[], folders: [] as Result[] };
   const matches: Result[] = [];
   const pinned = new Set(props.pinnedIds ?? []);
-  for (const root of props.tree[0]?.children ?? []) collect(root);
-
-  function collect(node: Node) {
-    const host = node.url ? domain(node.url) : '';
-    const tagText = (props.tags?.[node.id] ?? []).join(' ');
-    const score = scoreQuery(node.title ?? '', node.url ?? '', `${host} ${tagText}`.trim(), q);
+  for (const entry of index.value) {
+    const { node, host, path, kind, tags } = entry;
+    const score = scoreQuery(node.title ?? '', node.url ?? '', `${host} ${tags.join(' ')}`.trim(), q);
     if (score !== undefined) {
       matches.push({
         key: node.id,
         node,
         host,
-        path: folderPath(props.tree, node.parentId ?? '').map(item => item.title).filter(Boolean).join(' / '),
+        path,
         score,
-        kind: node.url ? 'bookmark' : 'folder',
+        kind,
         pinned: !!node.url && pinned.has(node.id),
       });
     }
-    for (const child of node.children ?? []) collect(child);
   }
 
   const ordered = matches.sort((a, b) => a.score - b.score || a.node.title.localeCompare(b.node.title)).slice(0, 30);

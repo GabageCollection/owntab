@@ -23,7 +23,7 @@ import MaintenancePanel from './components/MaintenancePanel.vue';
 import RecentPanel from './components/RecentPanel.vue';
 import TagModal from './components/TagModal.vue';
 import { useSettings } from './composables/useSettings';
-import { defaultRoot, descendantCount, findNode, flattenBookmarks, folderChoices, messageError, moveIndex, normalizeTags, pinnedSchema, pruneTags, recordRecent, rootsOf, settingsFromExport, settingsToExport, tagsSchema, titleSchema, urlSchema, type Node, type RecentEntry, type Settings, type TagMap } from './lib/model';
+import { defaultRoot, descendantCount, findNode, flattenBookmarks, folderChoices, messageError, moveIndex, normalizeTags, pinnedSchema, pruneTags, recordRecent, rootsOf, safeHref, settingsFromExport, settingsToExport, tagsSchema, titleSchema, toPlain, urlSchema, type Node, type RecentEntry, type Settings, type TagMap } from './lib/model';
 import { request, type Changed, type Request } from './lib/protocol';
 const props = defineProps<{ initialSettings?: Settings; initialRecent?: RecentEntry[]; initialTags?: TagMap }>();
 const {settings,load:loadSettings,save:saveSettings,dispose} = useSettings(props.initialSettings);
@@ -34,6 +34,7 @@ const folders = computed(() => items.value.filter(n => !n.url));
 const recent = ref<RecentEntry[]>([...(props.initialRecent ?? [])]);
 const tagMap = ref<TagMap>({ ...(props.initialTags ?? {}) });
 const activeTag = ref('');
+const removedIds = ref<string[]>([]);
 const bookmarks = computed(() => items.value.filter(n => n.url && (!activeTag.value || tagMap.value[n.id]?.includes(activeTag.value))));
 const allTags = computed(() => [...new Set(Object.values(tagMap.value).flat())].sort((a,b) => a.localeCompare(b)));
 const path = computed(() => { const result: Node[] = []; let n = current.value; while(n && n.id !== '0') { result.unshift(n); n = n.parentId ? findNode(tree.value,n.parentId) : undefined; } return result; });
@@ -43,14 +44,24 @@ const pinnedNodes = computed(() => pinnedIds.value.map(id => findNode(tree.value
 async function savePinned(ids: string[]) { try { const clean = pinnedSchema.parse(ids); pinnedIds.value = clean; const next = {...settings.value, pinnedIds: clean}; await saveSettings(next); } catch(e) { notify(messageError(e), 'error'); } }
 function togglePin(node: Node) { if (!node.url) return; savePinned(pinnedIds.value.includes(node.id) ? pinnedIds.value.filter(id => id !== node.id) : [...pinnedIds.value, node.id]); }
 function unpin(id: string) { savePinned(pinnedIds.value.filter(saved => saved !== id)); }
-function persistAux(key: 'recent' | 'tags', value: unknown) { void chrome.storage.local.set({ [key]: value }).catch(e => notify(messageError(e), 'error')); }
-function recordOpened(node: Node) { if (!node.url) return; recent.value = recordRecent(recent.value, node.id); persistAux('recent', recent.value); }
-function launchBookmark(node: Node) {
- const safe = (() => { try { const parsed = new URL(node.url!); return ['http:','https:','ftp:','file:'].includes(parsed.protocol) ? parsed.href : undefined; } catch { return undefined; } })();
+function persistAux(key: 'recent' | 'tags', value: unknown) { return chrome.storage.local.set({ [key]: toPlain(value) }).catch(e => notify(messageError(e), 'error')); }
+async function recordOpened(node: Node) { if (!node.url) return; recent.value = recordRecent(recent.value, node.id); await persistAux('recent', recent.value); }
+async function launchBookmark(node: Node) {
+ const safe = safeHref(node.url);
  if (!safe) { notify('此网址不能从扩展打开', 'error'); return; }
- recordOpened(node);
- if (settings.value.openInNewTab) window.open(safe, '_blank', 'noopener,noreferrer');
- else location.href = safe;
+ if (settings.value.openInNewTab) {
+  // Open synchronously so the popup blocker still sees a user gesture.
+  window.open(safe, '_blank', 'noopener,noreferrer');
+  void recordOpened(node);
+ } else {
+  // Persist before navigating: the page unloads as soon as location changes.
+  await recordOpened(node);
+  location.href = safe;
+ }
+}
+function openBookmark(node: Node, mode: 'app' | 'native') {
+ if (mode === 'app') { void launchBookmark(node); return; }
+ void recordOpened(node);
 }
 function pruneLocalData(fresh: Node[]) {
  const ids = new Set(flattenBookmarks(fresh).map(node => node.id));
@@ -59,6 +70,10 @@ function pruneLocalData(fresh: Node[]) {
  const nextTags = pruneTags(tagMap.value, fresh);
  if (Object.keys(nextTags).length !== Object.keys(tagMap.value).length) { tagMap.value = nextTags; persistAux('tags', nextTags); }
  if (activeTag.value && !Object.values(nextTags).flat().includes(activeTag.value)) activeTag.value = '';
+ if (removedIds.value.length) {
+  const next = removedIds.value.filter(id => ids.has(id));
+  if (next.length !== removedIds.value.length) removedIds.value = next;
+ }
 }
 async function refresh(id = currentId.value, initial = false) {
  const ticket = ++generation; if(initial) loading.value = true; syncing.value = true;
@@ -87,10 +102,13 @@ function closeMenu(restore = false) {
  menuTrigger = null;
 }
 const modal = ref<'edit'|'delete'|'move'|'settings'|'palette'|'maintenance'|'recent'|'tags'|null>(null), selected = ref<Node>(), creatingFolder = ref(false), title = ref(''), url = ref(''), destination = ref(''), busy = ref(false), formError = ref('');
+const modalOrigin = ref<'maintenance' | null>(null);
 const draft = ref<Settings>({...settings.value});
 const paletteInitial = ref('');
 const tagDraft = ref('');
-function begin(kind: 'edit'|'delete'|'move',node?:Node,folder = false) { selected.value = node; creatingFolder.value = folder; title.value = node?.title ?? ''; url.value = node?.url ?? ''; destination.value = node?.parentId ?? currentId.value; formError.value = ''; closeMenu(true); modal.value = kind; }
+function begin(kind: 'edit'|'delete'|'move',node?:Node,folder = false) { selected.value = node; creatingFolder.value = folder; title.value = node?.title ?? ''; url.value = node?.url ?? ''; destination.value = node?.parentId ?? currentId.value; formError.value = ''; modalOrigin.value = null; closeMenu(true); modal.value = kind; }
+/** Closing the delete dialog returns to the maintenance panel when it opened it. */
+function closeDelete() { modal.value = modalOrigin.value === 'maintenance' ? 'maintenance' : null; modalOrigin.value = null; }
 function openSettings() { draft.value = {...settings.value}; formError.value = ''; modal.value = 'settings'; }
 function openPalette(query = '') { paletteInitial.value = query; modal.value = 'palette'; }
 function openRecent() { modal.value = 'recent'; }
@@ -103,7 +121,7 @@ async function saveTags() {
   const next = { ...tagMap.value };
   if (tags.length) next[selected.value.id] = tags; else delete next[selected.value.id];
   tagsSchema.parse(next);
-  await chrome.storage.local.set({ tags: next });
+ await chrome.storage.local.set({ tags: toPlain(next) });
   tagMap.value = next;
   modal.value = null;
   notify('标签已保存');
@@ -201,9 +219,13 @@ async function folderDrop(folderNode: Node, event: DragEvent) {
   catch(e) { notify(messageError(e),'error'); }
 }
 async function maintenanceRemove(node: Node) {
-  try { await request({scope:'owntab',action:'remove',id:node.id}); notify('已删除'); }
-  catch(e) { notify(messageError(e),'error'); }
+ // Deletions always require the shared confirmation dialog.
+ selected.value = node;
+ formError.value = '';
+ modalOrigin.value = 'maintenance';
+ modal.value = 'delete';
 }
+function markRemoved(id: string) { removedIds.value = [...removedIds.value, id]; }
 async function toggleView() {
   const view = settings.value.view === 'grid' ? 'list' : 'grid';
   try { await saveSettings({...settings.value, view}); notify(view === 'grid' ? '网格视图' : '列表视图'); }
@@ -221,6 +243,8 @@ async function submit() {
     command = selected.value ? {scope:'owntab',action:'update',id:selected.value.id,title:cleanTitle,url:cleanUrl} : {scope:'owntab',action:'create',parentId:currentId.value,title:cleanTitle,url:cleanUrl}; }
    await request(command); notify(modal.value === 'delete' ? '已删除' : modal.value === 'move' ? '已移动' : '已保存');
   }
+  if(modal.value === 'delete') { if(selected.value) markRemoved(selected.value.id); }
+  if(modal.value === 'delete' && modalOrigin.value === 'maintenance') { modal.value = 'maintenance'; modalOrigin.value = null; return; }
   modal.value = null;
  } catch(e) { formError.value = messageError(e); } finally { busy.value = false; }
 }
@@ -238,7 +262,7 @@ onBeforeUnmount(() => { ++generation; dispose(); chrome.runtime.onMessage.remove
     </TopBar>
     <main>
       <SearchBar v-if="settings.showSearchBar" :engine-id="settings.searchEngine" :new-tab="settings.openInNewTab" @palette="openPalette"/>
-      <PinnedBar v-if="pinnedNodes.length" :nodes="pinnedNodes" :new-tab="settings.openInNewTab" @unpin="unpin" @open="recordOpened"/>
+      <PinnedBar v-if="pinnedNodes.length" :nodes="pinnedNodes" :new-tab="settings.openInNewTab" @unpin="unpin" @open="openBookmark"/>
       <RootTabs :roots="roots" :active-id="path[0]?.id" @navigate="navigate"/>
       <div class="content-toolbar">
         <Breadcrumb v-if="path.length > 1" :path="path" @navigate="navigate"/>
@@ -260,7 +284,7 @@ onBeforeUnmount(() => { ++generation; dispose(); chrome.runtime.onMessage.remove
           <FolderCard v-for="node in folders" :key="node.id" :node="node" :count="findNode(tree,node.id)?.children?.length ?? 0" :menu-open="menu?.node.id === node.id" :drop-position="dropIndicator?.id === node.id ? dropIndicator.position : null" :class="{dragging: dragNode?.id === node.id}" @navigate="navigate" @menu="openMenu" @dragstart="startDrag" @dragend="endDrag" @dragover="folderDragOver" @drop="folderDrop"/>
         </div>
         <div v-if="bookmarks.length" class="grid" :class="{'list-view': settings.view === 'list'}">
-          <BookmarkCard v-for="node in bookmarks" :key="node.id" :node="node" :tags="tagMap[node.id] ?? []" :new-tab="settings.openInNewTab" :menu-open="menu?.node.id === node.id" :class="{dragging: dragNode?.id === node.id, 'drag-before': dropIndicator?.id === node.id && dropIndicator.position === 'before', 'drag-after': dropIndicator?.id === node.id && dropIndicator.position === 'after'}" @menu="openMenu" @open="recordOpened" @dragstart="startDrag" @dragend="endDrag" @dragover="bookmarkDragOver(node,$event)" @drop="bookmarkDrop(node,$event)"/>
+          <BookmarkCard v-for="node in bookmarks" :key="node.id" :node="node" :tags="tagMap[node.id] ?? []" :new-tab="settings.openInNewTab" :menu-open="menu?.node.id === node.id" :class="{dragging: dragNode?.id === node.id, 'drag-before': dropIndicator?.id === node.id && dropIndicator.position === 'before', 'drag-after': dropIndicator?.id === node.id && dropIndicator.position === 'after'}" @menu="openMenu" @open="openBookmark" @dragstart="startDrag" @dragend="endDrag" @dragover="bookmarkDragOver(node,$event)" @drop="bookmarkDrop(node,$event)"/>
         </div>
         <EmptyState v-if="!items.length && !error" @create="begin('edit')"/>
         <div v-else-if="!folders.length && !bookmarks.length && !error" class="empty-state"><p>当前标签下没有书签。</p><button class="button" @click="activeTag = ''">清除筛选</button></div>
@@ -270,12 +294,12 @@ onBeforeUnmount(() => { ++generation; dispose(); chrome.runtime.onMessage.remove
   </div>
   <ContextMenu v-if="menu" :node="menu.node" :x="menu.x" :y="menu.y" :pinned="pinnedIds.includes(menu.node.id)" @action="begin" @close="closeMenu" @pin="togglePin" @tags="editTags"/>
   <EditModal v-if="modal === 'edit'" v-model:title="title" v-model:url="url" :heading="modalTitle" :is-bookmark="selected ? !!selected.url : !creatingFolder" :busy="busy" :error="formError" @submit="submit" @close="modal = null"/>
-  <DeleteConfirm v-if="modal === 'delete' && selected" :node="selected" :count="deleting ? descendantCount(deleting) : 0" :busy="busy" :error="formError" @submit="submit" @close="modal = null"/>
+  <DeleteConfirm v-if="modal === 'delete' && selected" :node="selected" :count="deleting ? descendantCount(deleting) : 0" :busy="busy" :error="formError" @submit="submit" @close="closeDelete"/>
   <MoveModal v-if="modal === 'move' && selected" v-model="destination" :node="selected" :choices="choices" :busy="busy" :error="formError" @submit="submit" @close="modal = null"/>
   <SettingsPanel v-if="modal === 'settings'" v-model="draft" :roots="roots" :busy="busy" :error="formError" @submit="submit" @export="exportSettings" @import="importSettings" @close="modal = null"/>
   <SearchPalette v-if="modal === 'palette'" :tree="tree" :pinned-ids="pinnedIds" :tags="tagMap" :engine-id="settings.searchEngine" :new-tab="settings.openInNewTab" :initial-query="paletteInitial" @close="modal = null" @navigate="navigate" @open="launchBookmark"/>
-  <RecentPanel v-if="modal === 'recent'" :tree="tree" :entries="recent" :new-tab="settings.openInNewTab" @close="modal = null" @navigate="navigate" @open="launchBookmark"/>
+  <RecentPanel v-if="modal === 'recent'" :tree="tree" :entries="recent" @close="modal = null" @navigate="navigate" @open="launchBookmark"/>
   <TagModal v-if="modal === 'tags' && selected" v-model="tagDraft" :node="selected" :tag-map="tagMap" :busy="busy" :error="formError" @submit="saveTags" @close="modal = null"/>
-  <MaintenancePanel v-if="modal === 'maintenance'" :tree="tree" :busy="busy" :error="formError" @remove="maintenanceRemove" @navigate="navigate" @close="modal = null"/>
+  <MaintenancePanel v-if="modal === 'maintenance'" :tree="tree" :busy="busy" :error="formError" :removed-ids="removedIds" @remove="maintenanceRemove" @navigate="navigate" @close="modal = null"/>
   <Toast v-if="toast" :message="toast.message" :kind="toast.kind"/>
 </template>

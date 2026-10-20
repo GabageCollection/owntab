@@ -39,6 +39,12 @@ describe('scoreQuery', () => {
   it('returns undefined for empty query', () => {
     expect(scoreQuery('anything', '', '', '   ')).toBeUndefined();
   });
+
+  it('requires the query letters to appear in order', () => {
+    expect(scoreQuery('GitHub Docs', '', '', 'git')).toBeDefined();
+    expect(scoreQuery('Glider', '', '', 'git')).toBeUndefined();
+    expect(scoreQuery('Glacier', '', '', 'git')).toBeUndefined();
+  });
 });
 
 describe('searchUrl and engine', () => {

@@ -229,6 +229,71 @@ await pass('A10 主题持久化与冷启动无闪烁', async () => {
   assert.equal(theme2, 'light', '重开后应应用存储的 light 主题');
 });
 
+// 14. 最近使用：普通点击后必须写入 recent 存储
+await pass('A14 普通点击写入最近使用', async () => {
+  await page.evaluate(async () => { await chrome.storage.local.remove('recent'); });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(800);
+  const card = page.locator('.bookmark-card .card-link').first();
+  if (await card.count() === 0) throw new Error('没有可点击的书签卡片');
+  // 在新标签页打开，避免当前页卸载影响断言。
+  await page.evaluate(async () => {
+    const settings = (await chrome.storage.local.get('settings')).settings ?? {};
+    await chrome.storage.local.set({ settings: { ...settings, openInNewTab: true } });
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(800);
+  await page.locator('.bookmark-card .card-link').first().click();
+  await page.waitForTimeout(1200);
+  const recent = await page.evaluate(async () => (await chrome.storage.local.get('recent')).recent ?? []);
+  console.log(`    recent 条目: ${recent.length}`);
+  assert.equal(recent.length, 1, '点击书签后应记录一条最近使用');
+  await page.evaluate(async () => {
+    const settings = (await chrome.storage.local.get('settings')).settings ?? {};
+    await chrome.storage.local.set({ settings: { ...settings, openInNewTab: false } });
+    await chrome.storage.local.remove('recent');
+  });
+});
+
+// 15. 维护面板删除必须二次确认
+await pass('A15 维护面板删除二次确认', async () => {
+  // 造一对重复网址，保证维护面板有可删除的行。
+  await page.evaluate(async () => {
+    const bar = await chrome.bookmarks.getTree();
+    const barRoot = bar[0].children.find(n => !n.url && n.title === 'Bookmarks bar') ?? bar[0].children.find(n => !n.url);
+    const url = 'https://example.com/duplicate-check';
+    const existing = barRoot.children.filter(c => c.url === url);
+    if (existing.length < 2) {
+      await chrome.bookmarks.create({ parentId: barRoot.id, title: '重复测试-1', url });
+      await new Promise(r => setTimeout(r, 500));
+      await chrome.bookmarks.create({ parentId: barRoot.id, title: '重复测试-2', url });
+      await new Promise(r => setTimeout(r, 800));
+    }
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(800);
+  await page.getByRole('button', { name: '书签维护' }).click();
+  await page.locator('.maintenance-body').waitFor({ timeout: 5000 });
+  const danger = page.locator('.maintenance-row .button.danger').first();
+  if (await danger.count() === 0) {
+    await page.keyboard.press('Escape');
+    throw new Error('维护面板应出现重复书签分组');
+  }
+  await danger.click();
+  const confirm = page.getByRole('dialog', { name: '删除确认' });
+  await confirm.waitFor({ timeout: 5000 });
+  const text = await confirm.innerText();
+  assert(text.includes('此操作不可撤销'), '删除前必须显示不可撤销提示');
+  await page.keyboard.press('Escape');
+  const stillThere = await page.locator('.maintenance-row').count();
+  assert(stillThere > 0, '取消后书签不应被删除');
+  // 清理测试数据
+  await page.evaluate(async () => {
+    const found = await chrome.bookmarks.search('重复测试-');
+    for (const item of found) await chrome.bookmarks.remove(item.id);
+  });
+});
+
 // 11. 断网可用（模拟离线）
 await pass('A11 断网后书签功能可用', async () => {
   await context.setOffline(true);

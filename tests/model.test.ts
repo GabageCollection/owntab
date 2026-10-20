@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  defaultRoot, domain, faviconColor, folderChoices, palette, rootLabel,
-  rootsOf, titleSchema, urlSchema, type Node,
+  buildIndex, defaultRoot, domain, duplicateKey, faviconColor, folderChoices, palette,
+  pathLabels, rootLabel, rootsOf, safeHref, titleSchema, urlSchema, type Node,
 } from '../src/lib/model';
 
 const folder = (id: string, title: string, children: Node[] = [], extra: Partial<Node> & { folderType?: string } = {}): Node =>
   ({ id, title, children, syncing: false, ...extra });
+const bookmark = (id: string, title: string, url: string, parentId = '1'): Node =>
+  ({ id, parentId, title, url, syncing: false });
 
 describe('URL and title validation', () => {
   it.each(['https://example.com', 'http://localhost:3000/path', 'HTTPS://EXAMPLE.COM/path'])('accepts HTTP(S) URL %s', url => {
@@ -113,6 +115,7 @@ describe('domain colors', () => {
     'about:blank', 'file:///etc/passwd', 'file://server/share',
     'javascript://example.com/alert(1)', 'data://example.com/payload',
     'mailto:user@example.com',
+    'chrome://settings', 'chrome-extension://abc/page.html', 'ftp://example.com/file',
     'https://', 'https://exa mple.com', 'example..com/path',
     'alert(1)', 'console.log(1)', 'return document.cookie;',
     'user@example.com/path', 'not a URL', '',
@@ -130,5 +133,50 @@ describe('domain colors', () => {
       faviconColor(domain('http://example.com/second')),
     );
     expect(palette).toContainEqual(faviconColor(''));
+  });
+});
+
+describe('safeHref', () => {
+  it('allows only http and https links to be opened', () => {
+    expect(safeHref('https://example.com/a')).toBe('https://example.com/a');
+    expect(safeHref('http://example.com')).toBe('http://example.com/');
+  });
+
+  it.each(['javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', 'chrome://settings', 'ftp://example.com', 'not a url', ''])(
+    'refuses to open %j',
+    value => expect(safeHref(value)).toBeUndefined(),
+  );
+});
+
+describe('duplicateKey', () => {
+  it('lowercases scheme and host but keeps path case', () => {
+    expect(duplicateKey('HTTPS://Example.com/Page')).toBe(duplicateKey('https://example.com/Page'));
+    expect(duplicateKey('https://example.com/Page')).not.toBe(duplicateKey('https://example.com/page'));
+  });
+
+  it('ignores the fragment and trailing slashes', () => {
+    expect(duplicateKey('https://example.com/page/#section')).toBe(duplicateKey('https://example.com/page'));
+  });
+});
+
+describe('buildIndex', () => {
+  const tree = [folder('0', '', [folder('1', '书签栏', [
+    folder('10', '工作', [bookmark('11', 'Docs', 'https://docs.example.com', '10')], { parentId: '1' }),
+    bookmark('12', 'Home', 'https://home.example.com', '1'),
+  ], { parentId: '0' })], { parentId: '0' })];
+
+  it('flattens nodes with their kind, host, path and tags', () => {
+    const index = buildIndex(tree, { '11': ['工作', '常用'] });
+    const docs = index.find(entry => entry.node.id === '11')!;
+    expect(docs.kind).toBe('bookmark');
+    expect(docs.host).toBe('docs.example.com');
+    expect(docs.path).toBe('书签栏 / 工作');
+    expect(docs.tags).toEqual(['工作', '常用']);
+    expect(index.find(entry => entry.node.id === '10')!.kind).toBe('folder');
+  });
+
+  it('labels the folder path of a node id', () => {
+    expect(pathLabels(tree, '10')).toBe('书签栏 / 工作');
+    expect(pathLabels(tree, 'missing')).toBe('');
   });
 });

@@ -4,14 +4,16 @@ import Modal from './Modal.vue';
 import ModalActions from './ModalActions.vue';
 import { checkLinks, duplicateGroups, flattenBookmarks, normalizeLinkResult, type LinkStatus, type Node } from '../lib/model';
 
-const props = defineProps<{ tree: Node[]; busy: boolean; error: string }>();
+const props = defineProps<{ tree: Node[]; busy: boolean; error: string; removedIds?: string[] }>();
 const emit = defineEmits<{ remove: [node: Node]; navigate: [id: string]; close: [] }>();
 
 type Tab = 'duplicates' | 'links';
 const tab = ref<Tab>('duplicates');
 const allBookmarks = computed(() => flattenBookmarks(props.tree[0]?.children ?? []));
 const groups = computed(() => duplicateGroups(props.tree[0]?.children ?? []));
-const duplicateCount = computed(() => groups.value.reduce((sum, group) => sum + group.nodes.length - 1, 0));
+const removed = computed(() => new Set(props.removedIds ?? []));
+const visibleGroups = computed(() => groups.value.map(group => ({ ...group, nodes: group.nodes.filter(item => !removed.value.has(item.node.id)) })).filter(group => group.nodes.length > 1));
+const visibleCount = computed(() => visibleGroups.value.reduce((sum, group) => sum + group.nodes.length - 1, 0));
 
 const MAX_CHECK = 50;
 const checking = ref(false);
@@ -41,6 +43,7 @@ async function startCheck() {
 }
 const linkResults = computed(() => [...statuses.value.entries()].map(([id, status]) => ({ node: allBookmarks.value.find(node => node.id === id)!, status })).filter(item => item.node));
 const statusLabel: Record<LinkStatus, string> = { ok: '正常', broken: '打不开', unknown: '无法判断' };
+const visibleLinks = computed(() => linkResults.value.filter(item => !removed.value.has(item.node.id)));
 </script>
 
 <template>
@@ -52,10 +55,10 @@ const statusLabel: Record<LinkStatus, string> = { ok: '正常', broken: '打不�
       </div>
 
       <template v-if="tab === 'duplicates'">
-        <p v-if="groups.length" class="muted">发现 {{ groups.length }} 组重复网址，可删除多余的 {{ duplicateCount }} 项。</p>
+        <p v-if="visibleGroups.length" class="muted">发现 {{ visibleGroups.length }} 组重复网址，可删除多余的 {{ visibleCount }} 项。</p>
         <p v-else class="muted">没有发现重复网址的书签。</p>
-        <div v-if="groups.length" class="maintenance-list">
-          <section v-for="group in groups" :key="group.url" class="maintenance-group">
+        <div v-if="visibleGroups.length" class="maintenance-list">
+          <section v-for="group in visibleGroups" :key="group.url" class="maintenance-group">
             <p class="maintenance-url muted" :title="group.url">{{ group.url }}</p>
             <div v-for="item in group.nodes" :key="item.node.id" class="maintenance-row">
               <span class="maintenance-title">{{ item.node.title || '未命名书签' }}</span>
@@ -74,8 +77,8 @@ const statusLabel: Record<LinkStatus, string> = { ok: '正常', broken: '打不�
           <span v-if="checking || checked" class="muted">{{ Math.round(progress * 100) }}%</span>
         </div>
         <div v-if="checking || checked" class="maintenance-progress" role="progressbar" :aria-valuenow="Math.round(progress * 100)" aria-valuemin="0" aria-valuemax="100"><span :style="{width: progress * 100 + '%'}"/></div>
-        <div v-if="linkResults.length" class="maintenance-list">
-          <div v-for="item in linkResults" :key="item.node.id" class="maintenance-row">
+        <div v-if="visibleLinks.length" class="maintenance-list">
+          <div v-for="item in visibleLinks" :key="item.node.id" class="maintenance-row">
             <span class="maintenance-badge" :data-status="item.status">{{ statusLabel[item.status] }}</span>
             <span class="maintenance-title">{{ item.node.title || '未命名书签' }}</span>
             <button class="button" @click="emit('navigate', item.node.parentId ?? '')">定位</button>
