@@ -14,6 +14,13 @@ export const settingsSchema = z.object({
   pinnedIds: z.array(z.string()).default([]),
 });
 export const pinnedSchema = z.array(z.string().min(1)).max(24);
+export const recentSchema = z.array(z.object({
+  id: z.string().min(1),
+  openedAt: z.number().int().nonnegative(),
+})).max(50);
+export const tagsSchema = z.record(z.string(), z.array(z.string().trim().min(1).max(24)).max(8));
+export type RecentEntry = z.infer<typeof recentSchema>[number];
+export type TagMap = z.infer<typeof tagsSchema>;
 export const ENGINES = { google: 'Google', bing: '必应', baidu: '百度', duckduckgo: 'DuckDuckGo', github: 'GitHub' } as const;
 export type EngineId = keyof typeof ENGINES;
 export function engine(id: string): EngineId { return id in ENGINES ? id as EngineId : 'google'; }
@@ -114,6 +121,62 @@ export function duplicateGroups(tree: Node[], limit = 200): DuplicateGroup[] {
 }
 export function folderChoices(tree: Node[], excluded?: string, depth = 0): { node: Node; depth: number }[] { return tree.flatMap(n => n.url || n.id === excluded ? [] : [{node:n,depth}, ...folderChoices(n.children ?? [], excluded, depth + 1)]); }
 export function messageError(e: unknown): string { return e instanceof z.ZodError ? e.issues[0].message : e instanceof Error ? e.message : '操作失败，请重试'; }
+
+export function recordRecent(entries: RecentEntry[], id: string, openedAt = Date.now()): RecentEntry[] {
+  return [{ id, openedAt }, ...entries.filter(entry => entry.id !== id)].slice(0, 50);
+}
+
+export function recentNodes(tree: Node[], entries: RecentEntry[]): { node: Node; openedAt: number }[] {
+  return entries.flatMap(entry => {
+    const node = findNode(tree, entry.id);
+    return node?.url ? [{ node, openedAt: entry.openedAt }] : [];
+  });
+}
+
+export function normalizeTags(input: string | string[]): string[] {
+  const parts = Array.isArray(input) ? input : input.split(/[,，]/);
+  const seen = new Set<string>();
+  return parts
+    .map(part => part.trim().slice(0, 24))
+    .filter(part => {
+      const key = part.toLocaleLowerCase();
+      if (!part || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+export function pruneTags(tags: TagMap, tree: Node[]): TagMap {
+  const ids = new Set(flattenBookmarks(tree).map(node => node.id));
+  return Object.fromEntries(Object.entries(tags).filter(([id, values]) => ids.has(id) && values.length));
+}
+
+export function moveIndex(children: Node[], sourceId: string, targetId: string, position: 'before' | 'after'): number {
+  const remaining = children.filter(child => child.id !== sourceId);
+  const target = remaining.findIndex(child => child.id === targetId);
+  if (target === -1) return -1;
+  return target + (position === 'after' ? 1 : 0);
+}
+
+export function settingsFromExport(text: string): Settings {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('设置文件不是有效的 JSON');
+  }
+  const source = parsed && typeof parsed === 'object' && 'settings' in parsed
+    ? (parsed as { settings: unknown }).settings
+    : parsed;
+  const result = settingsSchema.safeParse(source);
+  if (!result.success) throw new Error('设置文件格式不正确');
+  return result.data;
+}
+
+export function settingsToExport(settings: Settings): string {
+  return JSON.stringify({ version: 1, settings }, null, 2);
+}
 
 export type LinkStatus = 'ok' | 'broken' | 'unknown';
 export function normalizeLinkResult(status: number, ok: boolean): LinkStatus {

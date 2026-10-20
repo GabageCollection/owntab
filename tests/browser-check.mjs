@@ -24,6 +24,8 @@ try {
   await page.addInitScript(() => {
     let count = 20;
     let settings = { theme: 'light', rootId: '1', density: 'comfortable', openInNewTab: false };
+    let recent = [];
+    let tags = {};
     const listeners = [];
     const longTitle = '这是一个很长的标题用于检查截断和布局边界'.repeat(20);
     const children = () => count === 0 ? [] : [
@@ -53,6 +55,8 @@ try {
     window.__failStorage = false;
     window.__storageGets = 0;
     window.__getSettings = () => ({ ...settings });
+    window.__getRecent = () => [...recent];
+    window.__getTags = () => ({ ...tags });
     window.__setCount = value => {
       count = value;
       listeners.forEach(fn => fn({ scope: 'owntab-changed', all: true, parentIds: [] }));
@@ -81,10 +85,12 @@ try {
       },
       storage: {
         local: {
-          get: async () => { window.__storageGets++; return { settings: { ...settings } }; },
+          get: async () => { window.__storageGets++; return { settings: { ...settings }, recent: [...recent], tags: { ...tags } }; },
           set: async value => {
             if (window.__failStorage) throw Error('模拟存储失败');
-            settings = { ...value.settings };
+            if (value.settings) settings = { ...value.settings };
+            if (value.recent) recent = [...value.recent];
+            if (value.tags) tags = { ...value.tags };
           },
         },
         onChanged: { addListener: () => {}, removeListener: () => {} },
@@ -295,9 +301,44 @@ try {
   await page.waitForSelector('.pinned-item');
   assert((await page.evaluate(() => window.__getSettings())).pinnedIds.length === 1, 'pin persisted');
 
+  // V1.2 smoke: tags, recent panel, grouped folder search, engine fallback, settings transfer.
+  await card.hover();
+  await card.getByRole('button', { name: /操作：/ }).click();
+  await page.getByRole('menuitem', { name: '编辑标签', exact: true }).click();
+  await page.getByRole('dialog', { name: '编辑标签', exact: true }).waitFor();
+  await page.locator('dialog input').first().fill('工作, 常用');
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await page.locator('.toast.success').filter({ hasText: '标签已保存' }).waitFor();
+  assert.equal(await page.getByRole('combobox', { name: '按标签筛选' }).count(), 1, 'tag filter appears');
+  assert.deepEqual(await page.evaluate(() => window.__getTags()), { '20': ['工作', '常用'] }, 'tags persisted');
+  await page.getByRole('button', { name: '最近使用', exact: true }).click();
+  await page.getByRole('dialog', { name: '最近使用', exact: true }).waitFor();
+  assert((await page.locator('dialog').innerText()).includes('打开过的书签会出现在这里'), 'recent empty state');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('/');
+  await page.locator('.palette-input').fill('设计资源');
+  await page.waitForSelector('.palette-group-label');
+  assert((await page.locator('.palette-group-label').allInnerTexts()).includes('文件夹'), 'palette groups folders');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('/');
+  await page.locator('.palette-input').fill('zzz-no-match');
+  await page.getByRole('button', { name: '在网页中搜索', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出设置', exact: true }).click();
+  const download = await downloadPromise;
+  assert.equal(download.suggestedFilename(), 'owntab-settings.json', 'settings export filename');
+  await page.locator('dialog input[type=file]').setInputFiles({
+    name: 'settings.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ settings: { theme: 'dark', view: 'grid', showSearchBar: true, searchEngine: 'google', pinnedIds: [] } })),
+  });
+  await page.locator('.toast.success').filter({ hasText: '设置已导入' }).waitFor();
+  assert.equal(await page.locator('dialog').count(), 0, 'settings dialog closes after import');
+
   assert.deepEqual(errors, []);
   assert.deepEqual(focusFailures, [], 'menu/dialog focus restoration failures');
-  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin smoke. Mock Chrome API used.');
+  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin/tags/recent/search/settings-transfer smoke. Mock Chrome API used.');
 } finally {
   await browser?.close();
   await new Promise(done => server.close(done));

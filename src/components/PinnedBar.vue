@@ -4,7 +4,7 @@ import Icon from './Icon.vue';
 import { domain, faviconColor, type Node } from '../lib/model';
 
 const props = defineProps<{ nodes: Node[]; newTab: boolean }>();
-const emit = defineEmits<{ unpin: [id: string] }>();
+const emit = defineEmits<{ unpin: [id: string]; open: [node: Node] }>();
 const failed = ref(new Set<string>());
 watch(() => props.nodes, () => failed.value = new Set());
 function favicon(node: Node) {
@@ -23,7 +23,7 @@ const colored = computed(() => props.nodes.map(node => { const host = domain(nod
 <template>
   <section v-if="nodes.length" class="pinned-bar" aria-label="固定书签">
     <span v-for="item in colored" :key="item.node.id" class="pinned-item">
-      <a class="pinned-link" :href="item.url" :target="newTab ? '_blank' : undefined" rel="noopener noreferrer" :title="item.node.url">
+      <a class="pinned-link" :href="item.url" :target="newTab ? '_blank' : undefined" rel="noopener noreferrer" :title="item.node.url" @click="emit('open', item.node)">
         <span class="favicon pinned-favicon" :style="{'--favicon-bg': item.colors[0], '--favicon-text': item.colors[1]}">
           <img v-if="favicon(item.node) && !failed.has(item.node.id)" :src="favicon(item.node)" alt="" width="20" height="20" @error="failed = new Set([...failed, item.node.id])">
           <span v-else>{{ item.host.charAt(0).toUpperCase() || '?' }}</span>

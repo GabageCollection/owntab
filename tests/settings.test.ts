@@ -161,8 +161,8 @@ describe('new tab bootstrap', () => {
     });
     await import('../src/entrypoints/newtab/main');
     await vi.waitFor(() => expect(app.mount).toHaveBeenCalledWith('#app'));
-    expect(get).toHaveBeenCalledExactlyOnceWith('settings');
-    expect(app.createApp.mock.calls[0][1]).toEqual({ initialSettings: { ...defaults, theme: 'dark', rootId: 'custom' } });
+    expect(get).toHaveBeenCalledExactlyOnceWith(['settings', 'recent', 'tags']);
+    expect(app.createApp.mock.calls[0][1]).toEqual({ initialSettings: { ...defaults, theme: 'dark', rootId: 'custom' }, initialRecent: [], initialTags: {} });
     expectTheme('dark');
   });
 
@@ -172,7 +172,7 @@ describe('new tab bootstrap', () => {
     else get.mockResolvedValue({ settings: { theme: 'invalid' } });
     await import('../src/entrypoints/newtab/main');
     await vi.waitFor(() => expect(app.mount).toHaveBeenCalledWith('#app'));
-    expect(app.createApp.mock.calls[0][1]).toEqual({ initialSettings: defaults });
+    expect(app.createApp.mock.calls[0][1]).toEqual({ initialSettings: defaults, initialRecent: [], initialTags: {} });
     expectTheme('dark');
   });
 });
