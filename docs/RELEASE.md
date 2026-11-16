@@ -1,6 +1,6 @@
 # V1 发布准备（人工验收回填 + 提交清单）
 
-> 状态：真实 Chrome 自动与人工验收已通过；2026-11-16 发布候选复核通过类型检查、160 项单测、生产构建和浏览器冒烟。本文件记录 V1.2.0 提交清单，验收结论以 `docs/ACCEPTANCE.md` 为准。
+> 状态：V1.2.0 已推送至 GitHub 并创建 Release；ZIP 解压版在独立 Chrome profile 加载成功。Chrome Web Store 尚未提交，需通过开发者控制台完成上架与审核。本文件记录发布清单，验收结论以 `docs/ACCEPTANCE.md` 为准。
 
 ## A. 验收结果回填（逐项）
 
@@ -62,7 +62,7 @@
 - [x] 图标与 manifest `icons` 字段补齐；导出实际尺寸 PNG
 - [x] ZIP 内容与 manifest 权限复核；ZIP 解压版已在独立 Chrome profile 成功加载
 - [x] CHANGELOG 1.2.0 与 README 版本一致
-- [x] Git 仓库与远端 main 已建立；V1.2.0 tag 和 GitHub Release 待创建
+- [x] V1.2.0 tag 与 GitHub Release 已创建，ZIP 已附加
 - [ ] Chrome Web Store 开发者控制台提交与审核
 
 ## F. 版本规划
