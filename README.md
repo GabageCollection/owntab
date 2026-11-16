@@ -2,6 +2,8 @@
 
 Vue 3 + TypeScript + WXT 构建的 Chrome 新标签页书签工作台。原生 Chrome 书签是唯一数据源，无账号、无后端、无埋点。
 
+当前版本：**1.2.0**。完整版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 开发与构建
 
 需要 Node.js 22+ 与 pnpm（本项目使用 pnpm 12）。
