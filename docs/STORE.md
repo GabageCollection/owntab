@@ -1,5 +1,7 @@
 # Chrome Web Store listing - owntab 1.2.0
 
+> 历史材料存档：用户已于 2026-11-16 确认仅本地自用，不提交 Chrome Web Store。以下文案不属于待办事项，本地安装方式见 README。
+
 ## Short description
 
 原生 Chrome 书签工作台，支持搜索、整理、标签与多视图。无账号、无后端。

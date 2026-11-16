@@ -4,6 +4,18 @@ Vue 3 + TypeScript + WXT 构建的 Chrome 新标签页书签工作台。原生 C
 
 当前版本：**1.2.0**。完整版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
+## 本地安装与更新
+
+本项目供本地自用，通过开发者模式加载，无需 Chrome Web Store 账号。
+
+1. 打开 Chrome 的 `chrome://extensions`，开启“开发者模式”。
+2. 点击“加载已解压的扩展程序”，选择本仓库的 `.output/chrome-mv3` 目录。
+3. 新建标签页，即可使用 owntab。
+
+也可以下载 [GitHub Release](https://github.com/GabageCollection/owntab/releases/tag/v1.2.0) 中的 ZIP，将它解压到固定目录后加载该目录。Chrome 加载的是解压后的目录，使用期间请保留它。
+
+更新时运行 `pnpm build`，或将新版 ZIP 解压覆盖到原来的加载目录，再到 `chrome://extensions` 点击 owntab 的“重新加载”，并重新打开新标签页。使用同一目录和同一扩展条目更新，保留本地设置；更新前也可以在设置中导出配置。配置文件不包含书签，书签由 Chrome 独立管理。
+
 ## 开发与构建
 
 需要 Node.js 22+ 与 pnpm（本项目使用 pnpm 12）。
@@ -18,7 +30,7 @@ pnpm build
 pnpm zip
 ```
 
-生产构建输出到 `.output/chrome-mv3`。打开 Chrome 的 `chrome://extensions`，开启开发者模式，点击“加载已解压的扩展程序”，选择该目录，然后新建标签页。更新构建后在扩展页点击重新加载。`pnpm dev` 是 WXT 的开发模式，生产使用 `pnpm build`。
+生产构建输出到 `.output/chrome-mv3`，ZIP 输出到 `.output/owntab-1.2.0-chrome.zip`。`pnpm dev` 是 WXT 的开发模式，日常使用采用 `pnpm build` 的产物。
 
 ## 功能
 

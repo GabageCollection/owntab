@@ -1,6 +1,6 @@
-# V1 发布准备（人工验收回填 + 提交清单）
+# V1.2.0 本地使用版发布记录
 
-> 状态：V1.2.0 已推送至 GitHub 并创建 Release；ZIP 解压版在独立 Chrome profile 加载成功。Chrome Web Store 尚未提交，需通过开发者控制台完成上架与审核。本文件记录发布清单，验收结论以 `docs/ACCEPTANCE.md` 为准。
+> 状态：V1.2.0 本地使用版已完成，GitHub Release 与 ZIP 已发布；ZIP 解压版在独立 Chrome profile 加载成功。按用户于 2026-11-16 确认的范围，通过 Chrome 开发者模式加载使用，不提交 Chrome Web Store。验收结论以 `docs/ACCEPTANCE.md` 为准。
 
 ## A. 验收结果回填（逐项）
 
@@ -43,19 +43,13 @@
 3. 记录 DOM 节点数与首屏渲染耗时；对比 `pnpm build` 产物（非 dev 产物）。
 4. 结果写入 ACCEPTANCE.md 的验证段。
 
-## D. 商店素材
+## D. 本地安装与资源
 
-| 素材 | 要求 | 状态 | 建议值 |
-|---|---|---|---|
-| 图标 | 128×128 PNG（必需） | 已补齐 | 基于 `public/icon.svg` 导出；manifest 含 16/32/48/128 图标 |
-| 商店小图 | 440×280 | 后续可补 | 非初始提交必需 |
-| 商店大图 | 1400×560 | 后续可补 | 非初始提交必需 |
-| 截图 | 每项 ≤1MB，最多 10 张 | 已导出 | `store-assets/`，浅色/深色桌面和窄屏截图 |
-| 简短描述 | ≤132 字符 | 已准备 | 见 `docs/STORE.md` |
-| 分类 | 生产性 / 效率工具 | 待控制台选择 | Productivity |
-| 隐私与权限声明 | 仅 bookmarks / storage / favicon，数据不出本机 | 已准备 | 见 `docs/STORE.md`；明确说明链接检查会访问目标站 |
+在 `chrome://extensions` 开启开发者模式，加载 `.output/chrome-mv3`，或加载 GitHub Release ZIP 解压后的固定目录。更新时覆盖原目录并点击扩展的“重新加载”。完整步骤见 README「本地安装与更新」。
 
-## E. 提交前检查
+扩展图标已包含在包内（16/32/48/128 PNG）。已有的浅色、深色截图保留在 `store-assets/`；`docs/STORE.md` 仅作历史材料存档，不构成后续发布任务。
+
+## E. 发布检查
 
 - [x] 真实 Chrome 人工验收已完成（ACCEPTANCE.md），性能数据已记录（2026-10-12）
 - [x] `pnpm typecheck`、`pnpm test`（160 项）、`pnpm build`、`pnpm test:browser` 全绿（2026-11-16）
@@ -63,7 +57,8 @@
 - [x] ZIP 内容与 manifest 权限复核；ZIP 解压版已在独立 Chrome profile 成功加载
 - [x] CHANGELOG 1.2.0 与 README 版本一致
 - [x] V1.2.0 tag 与 GitHub Release 已创建，ZIP 已附加
-- [ ] Chrome Web Store 开发者控制台提交与审核
+
+Chrome Web Store 提交与审核不在本次范围内，没有待完成的商店发布事项。
 
 ## F. 版本规划
 
@@ -72,7 +67,7 @@
 - V1.1：搜索面板、置顶栏、网格/列表视图、书签维护、拖拽移动
 - V1.2：最近使用视图、本地标签、完整拖拽排序、搜索分组与引擎兜底、设置导入导出
 
-V1.2.0 发布候选包括扩展图标、变更记录、打包、包内容检查、GitHub Release 和 Chrome Web Store 提交状态回填。
+V1.2.0 本地使用版已完成扩展图标、变更记录、打包、包内容检查和 GitHub Release。
 
 ### V1.3 候选
 
