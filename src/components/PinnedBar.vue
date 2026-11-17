@@ -30,7 +30,7 @@ function onClick(event: MouseEvent, node: Node) {
     <span v-for="item in colored" :key="item.node.id" class="pinned-item">
       <a class="pinned-link" :href="item.url" :target="newTab ? '_blank' : undefined" rel="noopener noreferrer" :title="item.node.url" @click="onClick($event, item.node)">
         <span class="favicon pinned-favicon" :style="{'--favicon-bg': item.colors[0], '--favicon-text': item.colors[1]}">
-          <img v-if="favicon(item.node) && !failed.has(item.node.id)" :src="favicon(item.node)" alt="" width="20" height="20" @error="failed = new Set([...failed, item.node.id])">
+          <img loading="lazy" v-if="favicon(item.node) && !failed.has(item.node.id)" :src="favicon(item.node)" alt="" width="20" height="20" @error="failed = new Set([...failed, item.node.id])">
           <span v-else>{{ item.host.charAt(0).toUpperCase() || '?' }}</span>
         </span>
         <span class="pinned-title">{{ item.node.title || item.host || '未命名' }}</span>

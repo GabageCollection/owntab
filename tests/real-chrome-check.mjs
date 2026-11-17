@@ -306,7 +306,7 @@ await pass('A11 断网后书签功能可用', async () => {
 });
 
 // 12. 首屏可交互性能（200 项书签）
-await pass('A12 首屏可交互 <100ms 与 200 项性能', async () => {
+await pass('A12 200 项完整渲染与导航耗时记录', async () => {
   await page.evaluate(async () => {
     const bar = await chrome.bookmarks.getTree();
     const barRoot = bar[0].children.find(n => !n.url && n.title === 'Bookmarks bar') ?? bar[0].children.find(n => !n.url);
@@ -318,10 +318,23 @@ await pass('A12 首屏可交互 <100ms 与 200 项性能', async () => {
   });
   const start = Date.now();
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => document.querySelectorAll('.bookmark-card').length > 0, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('.bookmark-card').length === 200, null, { timeout: 5000 });
   const interactiveMs = Date.now() - start;
   const count = await page.evaluate(() => document.querySelectorAll('.bookmark-card').length);
-  console.log(`    ${count} 项书签，首屏可交互: ${interactiveMs}ms`);
+  assert.equal(count, 200);
+  console.log(`    ${count} 项书签，测试进程导航与等待耗时: ${interactiveMs}ms（页面内性能见 test:performance）`);
+  const lastIcon = page.locator('.bookmark-card img').last();
+  assert.equal(await lastIcon.getAttribute('loading'), 'lazy');
+  await lastIcon.scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => {
+    const icon = [...document.querySelectorAll('.bookmark-card img')].at(-1);
+    return icon?.complete && icon.naturalWidth > 0;
+  });
+  await page.getByRole('button', { name: '切换为列表视图' }).click();
+  await page.locator('.grid.list-view').waitFor();
+  await page.locator('.bookmark-card .card-link').last().focus();
+  await page.waitForFunction(() => document.activeElement === [...document.querySelectorAll('.bookmark-card .card-link')].at(-1));
+  await page.getByRole('button', { name: '切换为网格视图' }).click();
   // 清理性能测试数据
   await page.evaluate(async () => {
     const results = await chrome.bookmarks.search('性能测试-');
@@ -343,3 +356,4 @@ if (failures.length > 0) {
 }
 
 await context.close();
+if (failCount) process.exitCode = 1;

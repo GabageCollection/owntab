@@ -26,6 +26,7 @@ pnpm dev
 pnpm typecheck
 pnpm test
 pnpm test:browser
+pnpm test:performance
 pnpm build
 pnpm zip
 ```
@@ -55,3 +56,5 @@ pnpm zip
 ## 验证
 
 自动测试覆盖输入校验、域名降级、根目录回退、数据遍历、图标颜色、书签 API 错误和编辑保护，以及事件消息容量、导入去重、主题初始化和监听清理。浏览器检查使用模拟 Chrome API 验证生产界面；截图输出到被 Git 忽略的 artifacts 目录。实际 Chrome 验收清单与本次验证结果见 `docs/ACCEPTANCE.md`。安装扩展会直接编辑当前 Chrome 配置的真实书签，建议人工验收时使用独立的测试配置。
+
+首屏性能测量与优化记录见 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)。`test:performance` 使用独立临时 Chrome for Testing profile，不修改日常 Chrome 书签；可用 `OWNTAB_CHROME` 指定测试浏览器，`OWNTAB_PERF_MODE=cold-worker` 测量后台停止后的页面启动。

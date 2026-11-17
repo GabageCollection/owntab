@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref } from 'vue';
 import BookmarkCard from './components/BookmarkCard.vue';
 import Icon from './components/Icon.vue';
 import TopBar from './components/TopBar.vue';
@@ -10,22 +10,23 @@ import Skeleton from './components/Skeleton.vue';
 import EmptyState from './components/EmptyState.vue';
 import StatusBar from './components/StatusBar.vue';
 import ContextMenu from './components/ContextMenu.vue';
-import EditModal from './components/EditModal.vue';
-import DeleteConfirm from './components/DeleteConfirm.vue';
-import MoveModal from './components/MoveModal.vue';
-import SettingsPanel from './components/SettingsPanel.vue';
 import Toast from './components/Toast.vue';
 import SearchBar from './components/SearchBar.vue';
-import SearchPalette from './components/SearchPalette.vue';
 import PinnedBar from './components/PinnedBar.vue';
 import ToolbarClock from './components/ToolbarClock.vue';
-import MaintenancePanel from './components/MaintenancePanel.vue';
-import RecentPanel from './components/RecentPanel.vue';
-import TagModal from './components/TagModal.vue';
 import { useSettings } from './composables/useSettings';
 import { defaultRoot, descendantCount, findNode, flattenBookmarks, folderChoices, messageError, moveIndex, normalizeTags, pinnedSchema, pruneTags, recordRecent, rootsOf, safeHref, settingsFromExport, settingsToExport, tagsSchema, titleSchema, toPlain, urlSchema, type Node, type RecentEntry, type Settings, type TagMap } from './lib/model';
 import { request, type Changed, type Request } from './lib/protocol';
-const props = defineProps<{ initialSettings?: Settings; initialRecent?: RecentEntry[]; initialTags?: TagMap }>();
+import type { InitialBookmarks } from './lib/startup';
+const EditModal = defineAsyncComponent(() => import('./components/EditModal.vue'));
+const DeleteConfirm = defineAsyncComponent(() => import('./components/DeleteConfirm.vue'));
+const MoveModal = defineAsyncComponent(() => import('./components/MoveModal.vue'));
+const SettingsPanel = defineAsyncComponent(() => import('./components/SettingsPanel.vue'));
+const SearchPalette = defineAsyncComponent(() => import('./components/SearchPalette.vue'));
+const MaintenancePanel = defineAsyncComponent(() => import('./components/MaintenancePanel.vue'));
+const RecentPanel = defineAsyncComponent(() => import('./components/RecentPanel.vue'));
+const TagModal = defineAsyncComponent(() => import('./components/TagModal.vue'));
+const props = defineProps<{ initialSettings?: Settings; initialRecent?: RecentEntry[]; initialTags?: TagMap; initialBookmarks?: InitialBookmarks }>();
 const {settings,load:loadSettings,save:saveSettings,dispose} = useSettings(props.initialSettings);
 const tree = ref<Node[]>([]), items = ref<Node[]>([]), currentId = ref(''), loading = ref(true), syncing = ref(false), importing = ref(false), error = ref('');
 const roots = computed(() => rootsOf(tree.value));
@@ -39,6 +40,7 @@ const bookmarks = computed(() => items.value.filter(n => n.url && (!activeTag.va
 const allTags = computed(() => [...new Set(Object.values(tagMap.value).flat())].sort((a,b) => a.localeCompare(b)));
 const path = computed(() => { const result: Node[] = []; let n = current.value; while(n && n.id !== '0') { result.unshift(n); n = n.parentId ? findNode(tree.value,n.parentId) : undefined; } return result; });
 let generation = 0;
+let initialBookmarks = props.initialBookmarks;
 const pinnedIds = ref<string[]>([...(props.initialSettings?.pinnedIds ?? [])]);
 const pinnedNodes = computed(() => pinnedIds.value.map(id => findNode(tree.value, id)).filter((n): n is Node => !!n?.url));
 async function savePinned(ids: string[]) { try { const clean = pinnedSchema.parse(ids); pinnedIds.value = clean; const next = {...settings.value, pinnedIds: clean}; await saveSettings(next); } catch(e) { notify(messageError(e), 'error'); } }
@@ -77,20 +79,35 @@ function pruneLocalData(fresh: Node[]) {
 }
 async function refresh(id = currentId.value, initial = false) {
  const ticket = ++generation; if(initial) loading.value = true; syncing.value = true;
+ const prefetched = initial ? initialBookmarks : undefined;
+ initialBookmarks = undefined; // Retrying must always read a new snapshot.
  try {
-  const fresh = await request({scope:'owntab',action:'tree'}) as Node[];
+  let fresh: Node[];
+  if (prefetched && !prefetched.invalidated) {
+   const reply = await prefetched.reply;
+   if (!reply?.ok) throw new Error(reply?.error ?? '后台暂时不可用，请重试');
+   fresh = reply.data as Node[];
+  } else fresh = await request({scope:'owntab',action:'tree'}) as Node[];
   const root = defaultRoot(rootsOf(fresh),settings.value.rootId);
   if (!root) throw new Error('未找到可用的书签根目录');
   let target = findNode(fresh,id);
   if (!target || target.url || target.id === '0') target = root;
-  const children = await request({scope:'owntab',action:'children',id:target.id}) as Node[];
+  // Render from a single Chrome snapshot instead of a second API round trip.
+  const children = target.children ?? [];
   if(ticket !== generation) return;
   tree.value = fresh; currentId.value = target.id; items.value = children; error.value = ''; pruneLocalData(fresh);
  } catch(e) { if(ticket === generation) error.value = messageError(e); }
  finally { if(ticket === generation) { loading.value = false; syncing.value = false; } }
 }
 function navigate(id: string) { closeMenu(); void refresh(id); }
-function changed(message: Changed) { if(message?.scope !== 'owntab-changed') return; importing.value = !!message.importing; if(importing.value) return; if(message.all || message.parentIds.includes(currentId.value) || message.parentIds.some(id => path.value.some(n => n.id === id))) void refresh(); }
+function changed(message: Changed) {
+ if(message?.scope !== 'owntab-changed') return;
+ importing.value = !!message.importing;
+ if(importing.value) { ++generation; return; }
+ // A change during startup must invalidate the in-flight prefetched snapshot,
+ // even before currentId/path have been resolved.
+ if(loading.value || message.all || message.parentIds.includes(currentId.value) || message.parentIds.some(id => path.value.some(n => n.id === id))) void refresh();
+}
 const toast = ref<{message:string;kind:'success'|'error'} | null>(null); let toastTimer: ReturnType<typeof setTimeout>;
 function notify(message: string, kind: 'success'|'error' = 'success') { toast.value = {message,kind}; clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.value = null,3000); }
 const menu = ref<{node:Node;x:number;y:number} | null>(null); let menuTrigger: HTMLElement | null = null;
@@ -252,8 +269,18 @@ async function cycleTheme() { const next = settings.value.theme === 'auto' ? 'li
 function pageKeys(event: KeyboardEvent) {
  if ((event.key === '/' || ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k')) && !modal.value && !menu.value && !(event.target as HTMLElement)?.closest('input,select,textarea')) { event.preventDefault(); openPalette(); return; }
  if(modal.value || menu.value || (event.target as HTMLElement)?.closest('input,select,textarea')) return; if(event.key === 'ArrowLeft' && path.value.length > 1) { event.preventDefault(); navigate(path.value[path.value.length-2].id); } if(event.key === 'ArrowDown' || event.key === 'ArrowUp') { const links = [...document.querySelectorAll<HTMLElement>('.grid .card-link')]; const i = links.indexOf(document.activeElement as HTMLElement); if(i >= 0) { event.preventDefault(); links[(i+(event.key === 'ArrowDown' ? 1 : -1)+links.length)%links.length]?.focus(); } } }
-onMounted(async () => { chrome.runtime.onMessage.addListener(changed); document.addEventListener('keydown',pageKeys); try { if (!props.initialSettings) await loadSettings(); await refresh(settings.value.rootId,true); } catch(e) { error.value = messageError(e); loading.value = false; } });
-onBeforeUnmount(() => { ++generation; dispose(); chrome.runtime.onMessage.removeListener(changed); document.removeEventListener('keydown',pageKeys); clearTimeout(toastTimer); });
+onMounted(async () => {
+ chrome.runtime.onMessage.addListener(changed);
+ document.addEventListener('keydown',pageKeys);
+ // Hand off the early listener after registering the live one, without a gap.
+ importing.value = props.initialBookmarks?.importing ?? false;
+ props.initialBookmarks?.dispose();
+ try {
+  if (!props.initialSettings) await loadSettings();
+  if (!importing.value) await refresh(settings.value.rootId,true);
+ } catch(e) { error.value = messageError(e); loading.value = false; }
+});
+onBeforeUnmount(() => { ++generation; props.initialBookmarks?.dispose(); dispose(); chrome.runtime.onMessage.removeListener(changed); document.removeEventListener('keydown',pageKeys); clearTimeout(toastTimer); });
 </script>
 <template>
   <div class="app-shell" :class="{compact:settings.density === 'compact'}">

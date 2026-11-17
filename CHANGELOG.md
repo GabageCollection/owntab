@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Start bookmark and settings reads in parallel while loading the new tab UI.
+- Load offscreen bookmark favicons and unopened dialogs on demand.
+- Render each directory from one bookmark-tree snapshot, avoiding a duplicate API request.
+- Preserve bookmark changes and import state during startup, and fetch fresh data on retry.
+- Add repeatable page-level startup measurements for warm and stopped background workers.
+
 ## 1.2.0 - 2026-11-16
 
 - Added a recent bookmarks view with local usage history.

@@ -62,6 +62,9 @@ try {
     };
     window.__failStorage = false;
     window.__storageGets = 0;
+    window.__treeRequests = 0;
+    window.__emitChanged = message => listeners.forEach(fn => fn(message));
+    const startupCase = new URL(location.href).searchParams.get('startupCase');
     window.__getSettings = () => ({ ...settings });
     window.__getRecent = () => [...recent];
     window.__getTags = () => ({ ...tags });
@@ -85,8 +88,16 @@ try {
         getURL: () => 'http://127.0.0.1/missing-icon',
         onMessage: { addListener: fn => listeners.push(fn), removeListener: fn => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); } },
         sendMessage: async req => {
-          if (req.action === 'tree') return { ok: true, data: tree() };
-          if (req.action === 'children') return { ok: true, data: find(tree(), req.id)?.children ?? [] };
+          if (req.action === 'tree') {
+            window.__treeRequests++;
+            const snapshot = tree();
+            if (window.__treeRequests === 1 && startupCase === 'pending-tree') {
+              await new Promise(resolve => { window.__releaseTree = resolve; });
+            }
+            if (window.__treeRequests === 1 && startupCase === 'failed-tree') return { ok: false, error: '首次书签读取失败' };
+            return { ok: true, data: snapshot };
+          }
+          if (req.action === 'children') throw Error('directory must use the tree snapshot');
           if (req.action === 'create') return { ok: false, error: '模拟 API 失败，输入应保留' };
           return { ok: true, data: null };
         },
@@ -95,6 +106,7 @@ try {
         local: {
           get: async () => {
             window.__storageGets++;
+            if (startupCase === 'pending-storage') await new Promise(resolve => { window.__releaseStorage = resolve; });
             const saved = await window.__owntabRead();
             settings = saved.settings; recent = saved.recent; tags = saved.tags;
             return { settings: { ...settings }, recent: [...recent], tags: { ...tags } };
@@ -116,6 +128,7 @@ try {
   const boot = await page.evaluate(() => ({ themes: window.__themeChanges, gets: window.__storageGets, theme: document.documentElement.dataset.theme }));
   assert.equal(boot.theme, 'light', 'saved light must override system dark at boot');
   assert.equal(boot.gets, 1, 'bootstrap and App must share one storage.get');
+  assert.equal(await page.evaluate(() => window.__treeRequests), 1, 'startup should consume its single prefetched tree');
   const firstLight = boot.themes.indexOf('light');
   assert(firstLight >= 0, 'observer must capture the initial light theme');
   assert(!boot.themes.slice(firstLight + 1).includes('dark'), `dark theme observed after saved light: ${boot.themes}`);
@@ -375,9 +388,47 @@ try {
   await page.locator('.toast.success').filter({ hasText: '设置已导入' }).waitFor();
   assert.equal(await page.locator('dialog').count(), 0, 'settings dialog closes after import');
 
+  // The prefetch can finish before mounting; bookmark changes must invalidate it.
+  await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=pending-storage`);
+  await page.waitForFunction(() => window.__releaseStorage && window.__treeRequests === 1);
+  await page.evaluate(() => { window.__setCount(21); window.__releaseStorage(); });
+  await page.waitForFunction(() => document.querySelectorAll('.bookmark-card').length === 21);
+  assert.equal(await page.evaluate(() => window.__treeRequests), 2, 'pre-mount changes require a new tree');
+
+  await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=pending-storage`);
+  await page.waitForFunction(() => window.__releaseStorage && window.__treeRequests === 1);
+  await page.evaluate(() => {
+    window.__emitChanged({ scope: 'owntab-changed', parentIds: [], all: false, importing: true });
+    window.__releaseStorage();
+  });
+  await page.locator('.app-shell').waitFor();
+  await page.locator('.statusbar').filter({ hasText: '正在导入书签' }).waitFor();
+  assert.equal(await page.locator('.bookmark-card').count(), 0, 'importing must hold the prefetched tree');
+  await page.evaluate(() => window.__setCount(21));
+  await page.waitForFunction(() => document.querySelectorAll('.bookmark-card').length === 21);
+  assert.equal(await page.evaluate(() => window.__treeRequests), 2, 'import completion reads a fresh snapshot');
+
+  // A stale reply finishing after a live refresh must not overwrite newer data.
+  await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=pending-tree`);
+  await page.locator('.app-shell').waitFor();
+  await page.waitForFunction(() => window.__releaseTree);
+  await page.evaluate(() => window.__setCount(21));
+  await page.waitForFunction(() => document.querySelectorAll('.bookmark-card').length === 21);
+  await page.evaluate(async () => {
+    window.__releaseTree();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  assert.equal(await page.locator('.bookmark-card').count(), 21, 'late prefetch must not overwrite live changes');
+
+  await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=failed-tree`);
+  await page.getByRole('alert').filter({ hasText: '首次书签读取失败' }).waitFor();
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.locator('.bookmark-card').first().waitFor();
+  assert.equal(await page.evaluate(() => window.__treeRequests), 2, 'retry must not reuse failed prefetch');
+
   assert.deepEqual(errors, []);
   assert.deepEqual(focusFailures, [], 'menu/dialog focus restoration failures');
-  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read; folder keyboard menus, edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin/tags/recent/search/settings-transfer smoke; recent recorded on card click; maintenance delete confirmation. Mock Chrome API used.');
+  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read and one tree request; folder keyboard menus, async edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin/tags/recent/search/settings-transfer smoke; recent recorded on card click; maintenance delete confirmation; prefetch invalidation before/after mount, import handoff, failed-prefetch retry. Mock Chrome API used.');
 } finally {
   await browser?.close();
   await new Promise(done => server.close(done));

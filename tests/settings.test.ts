@@ -52,6 +52,10 @@ beforeEach(() => {
   vi.stubGlobal('document', { documentElement: root });
   vi.stubGlobal('matchMedia', vi.fn(() => media));
   vi.stubGlobal('chrome', {
+    runtime: {
+      sendMessage: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+      onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
     storage: {
       local: { get, set },
       onChanged: { addListener: vi.fn(listener => storageListeners.add(listener)), removeListener },
@@ -162,7 +166,7 @@ describe('new tab bootstrap', () => {
     await import('../src/entrypoints/newtab/main');
     await vi.waitFor(() => expect(app.mount).toHaveBeenCalledWith('#app'));
     expect(get).toHaveBeenCalledExactlyOnceWith(['settings', 'recent', 'tags']);
-    expect(app.createApp.mock.calls[0][1]).toEqual({ initialSettings: { ...defaults, theme: 'dark', rootId: 'custom' }, initialRecent: [], initialTags: {} });
+    expect(app.createApp.mock.calls[0][1]).toMatchObject({ initialSettings: { ...defaults, theme: 'dark', rootId: 'custom' }, initialRecent: [], initialTags: {} });
     expectTheme('dark');
   });
 
@@ -172,7 +176,20 @@ describe('new tab bootstrap', () => {
     else get.mockResolvedValue({ settings: { theme: 'invalid' } });
     await import('../src/entrypoints/newtab/main');
     await vi.waitFor(() => expect(app.mount).toHaveBeenCalledWith('#app'));
-    expect(app.createApp.mock.calls[0][1]).toEqual({ initialSettings: defaults, initialRecent: [], initialTags: {} });
+    expect(app.createApp.mock.calls[0][1]).toMatchObject({ initialSettings: defaults, initialRecent: [], initialTags: {} });
     expectTheme('dark');
+  });
+
+  it('starts both reads before storage resolves and mounts without waiting for bookmarks', async () => {
+    let resolve!: (value: unknown) => void;
+    get.mockReturnValue(new Promise(done => { resolve = done; }));
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(() => new Promise<never>(() => {}));
+    await import('../src/entrypoints/newtab/main');
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith({ scope: 'owntab', action: 'tree' });
+    expect(get).toHaveBeenCalledOnce();
+    expect(app.mount).not.toHaveBeenCalled();
+    resolve({ settings: { theme: 'light' } });
+    await vi.waitFor(() => expect(app.mount).toHaveBeenCalledWith('#app'));
+    expectTheme('light');
   });
 });
