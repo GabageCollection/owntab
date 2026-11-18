@@ -123,3 +123,21 @@ OWNTAB_PERF_MODE=cold-worker OWNTAB_PERF_SAMPLES=12 node tests/performance-check
 本地 .output/chrome-mv3 和 .output/owntab-1.2.0-chrome.zip 已更新，ZIP 中 21 个文件与构建目录逐文件一致，权限仍仅为 bookmarks/storage/favicon。版本号保留 1.2.0，优化记录置于 CHANGELOG 的 Unreleased；远端 GitHub Release 仍是原始 1.2.0 文件。
 
 2026-11-17 用户确认本地实际使用验收已完成，本轮优化进入 Git 归档。
+
+## V1.3 功能实现后的性能复核（2026-11-17）
+
+从 Git 64dcf39 单独构建已验收的 V1.2 优化版本作为对照。仍用 Chrome for Testing 151、1440×900、200 个 example.com 书签、独立临时 profile；每组 12 次导航，首次单独报告，以下为其余 11 次的中位数。
+
+| 场景 | 指标 | V1.2 优化版 | V1.3 |
+|---|---|---:|---:|
+| 后台停止 | 全部 200 项 DOM 就绪 | 78.7ms | 79.9ms |
+| 后台停止 | 两次 rAF 标记 | 95.1ms | 96.3ms |
+| 后台停止 | 测试进程耗时 | 100.1ms | 101.1ms |
+| 后台已运行 | 全部 200 项 DOM 就绪 | 57.5ms | 50.0ms |
+| 后台已运行 | 两次 rAF 标记 | 77.3ms | 70.1ms |
+
+后台停止场景差异约 1.2ms，未见明显启动回退；后台运行对照复测时同时运行过浏览器回归，系统负载不同，不能将其差异归因于功能带来的性能收益。V1.3 后续两帧最大 100.9ms，首次初始化 DOM 147.4ms / 两帧 169.6ms，仍不宣称所有启动低于 100ms。
+
+备份逻辑单独分块，设置、恢复和帮助界面按需加载；完整主包约 201.7KB（压缩前），V1.2 约 194.4KB；完整构建约 372KB。保留并行读取、同一树快照与 favicon 懒加载，未引入新的网络启动请求或权限。该测量使用空置顶与标签，带大量本地标签/自定义引擎的场景未单独跑基准。
+
+原始文件：artifacts/performance/v13-{before,after}-{cold,warm}.json。以上是 DOM 与帧标记，不等同于浏览器真实交互时延。

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import Modal from './Modal.vue';
-import { buildIndex, scoreQuery, searchUrl, type Node, type TagMap } from '../lib/model';
+import { buildIndex, scoreQuery, searchUrl, type Node, type TagMap, type CustomEngine } from '../lib/model';
 
-const props = defineProps<{ tree: Node[]; pinnedIds?: string[]; tags?: TagMap; engineId?: string; newTab?: boolean; initialQuery?: string }>();
+const props = defineProps<{ tree: Node[]; pinnedIds?: string[]; tags?: TagMap; engineId?: string; customEngines: CustomEngine[]; newTab?: boolean; initialQuery?: string }>();
 const emit = defineEmits<{ close: []; navigate: [id: string]; open: [node: Node] }>();
 
 interface Result {
@@ -54,26 +54,28 @@ const groups = computed(() => {
 });
 
 const results = computed(() => [...groups.value.pinned, ...groups.value.bookmarks, ...groups.value.folders]);
-const engineUrl = computed(() => searchUrl(query.value, props.engineId ?? 'google'));
+const engineUrl = computed(() => searchUrl(query.value, props.engineId ?? 'google', props.customEngines));
 watch(query, () => active.value = 0);
 watch(results, value => { if (active.value >= value.length) active.value = 0; });
 
 function keys(event: KeyboardEvent) {
+  if (event.isComposing) return;
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
     openEngine();
     return;
   }
   if (!results.value.length) {
-    if (event.key === 'Enter') { event.preventDefault(); openEngine(); }
+    if (event.key === 'Enter' && event.target === input.value) { event.preventDefault(); openEngine(); }
     return;
   }
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
     event.preventDefault();
-    active.value = (active.value + (event.key === 'ArrowDown' ? 1 : -1) + results.value.length) % results.value.length;
+    active.value = event.key === 'Home' ? 0 : event.key === 'End' ? results.value.length - 1 : (active.value + (event.key === 'ArrowDown' ? 1 : -1) + results.value.length) % results.value.length;
     list.value?.querySelectorAll<HTMLElement>('.palette-item')[active.value]?.scrollIntoView({ block: 'nearest' });
+    input.value?.focus();
   }
-  if (event.key === 'Enter') { event.preventDefault(); choose(results.value[active.value]); }
+  if (event.key === 'Enter' && event.target === input.value) { event.preventDefault(); choose(results.value[active.value]); }
 }
 
 function choose(result?: Result) {
@@ -96,7 +98,7 @@ nextTick(() => input.value?.focus());
 <template>
   <Modal title="搜索书签" @close="emit('close')">
     <div class="modal-body palette-body" @keydown="keys" @keydown.esc.stop.prevent="emit('close')">
-      <input ref="input" v-model="query" class="palette-input" type="search" placeholder="搜索标题、网址、文件夹或标签…" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-label="搜索书签" spellcheck="false">
+      <input ref="input" v-model="query" class="palette-input" type="search" placeholder="搜索标题、网址、文件夹或标签…" role="combobox" aria-expanded="true" aria-controls="palette-list" :aria-activedescendant="results.length ? `result-${results[active]?.key}` : undefined" aria-label="搜索书签" spellcheck="false">
       <div v-if="query.trim() && !results.length" class="palette-empty">
         <p class="muted">没有找到匹配「{{ query.trim() }}」的书签或文件夹。</p>
         <button class="button primary" type="button" @click="openEngine">在网页中搜索</button>
@@ -112,12 +114,14 @@ nextTick(() => input.value?.focus());
             <button
               v-for="result in group.items"
               :key="result.key"
+              :id="`result-${result.key}`"
               class="palette-item"
               :class="{ active: results.indexOf(result) === active }"
               role="option"
               :aria-selected="results.indexOf(result) === active"
               type="button"
               @mousemove="active = results.indexOf(result)"
+              @focus="active = results.indexOf(result)"
               @click="choose(result)"
             >
               <span class="palette-item-main">
@@ -134,7 +138,7 @@ nextTick(() => input.value?.focus());
         <span class="muted">网页搜索</span>
         <button class="button" type="button" @click="openEngine">{{ query.trim() }}</button>
       </div>
-      <p class="muted palette-hint">↑↓ 选择 · Enter 打开 · ⌘/Ctrl+Enter 网页搜索 · Esc 关闭</p>
+      <p class="muted palette-hint">↑↓ / Home End 选择 · Enter 打开 · ⌘/Ctrl+Enter 网页搜索 · Esc 关闭</p>
     </div>
   </Modal>
 </template>

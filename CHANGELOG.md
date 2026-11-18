@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 - 2026-11-17
+
+- Added custom search-engine templates with shared homepage and palette search.
+- Added persistent pinned-bar ordering with pointer drag and keyboard controls.
+- Added complete local backup and previewed merge/replace restore, including settings, engines, pins, tags and recent history; safely remap existing bookmark references and retain legacy settings import.
+- Added section navigation, Home/End selection, folder-return focus, keyboard help and IME guards.
+- Keep native bookmarks unchanged during pin sorting and local-data restore; synchronize local data across open new tabs.
 
 - Start bookmark and settings reads in parallel while loading the new tab UI.
 - Load offscreen bookmark favicons and unopened dialogs on demand.

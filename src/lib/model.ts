@@ -2,6 +2,26 @@ import { z } from 'zod';
 export type Node = chrome.bookmarks.BookmarkTreeNode;
 export const titleSchema = z.string().trim().min(1, '请输入名称');
 export const urlSchema = z.string().trim().url('请输入完整网址').refine(v => /^https?:\/\//i.test(v), '仅支持 http 和 https 网址');
+export const ENGINES = { google: 'Google', bing: '必应', baidu: '百度', duckduckgo: 'DuckDuckGo', github: 'GitHub' } as const;
+const templateSchema = z.string().trim().max(2048).refine(value => {
+  if (!value.includes('{query}')) return false;
+  try {
+    const url = new URL(value.replaceAll('{query}', 'owntab-query'));
+    // Placeholders belong in the path/query, never in a scheme, host or credentials.
+    const authority = value.match(/^https?:\/\/([^/?#]*)/i)?.[1];
+    return !!authority && /^https?:$/.test(url.protocol) && !url.username && !url.password
+      && !authority.includes('{query}');
+  } catch { return false; }
+}, '模板须为 http/https 网址，并在路径或参数中包含 {query}');
+export const customEngineSchema = z.object({
+  id: z.string().regex(/^custom-[a-zA-Z0-9-]+$/),
+  name: z.string().trim().min(1, '请输入引擎名称').max(40, '名称最多 40 字'),
+  template: templateSchema,
+});
+export const customEnginesSchema = z.array(customEngineSchema).max(20, '最多添加 20 个自定义引擎')
+  .refine(value => new Set(value.map(item => item.id)).size === value.length, '引擎标识重复');
+export type CustomEngine = z.infer<typeof customEngineSchema>;
+export const pinnedSchema = z.array(z.string().min(1)).max(24).refine(ids => new Set(ids).size === ids.length, '置顶书签重复');
 export const settingsSchema = z.object({
   theme: z.enum(['light', 'dark', 'auto']).default('auto'),
   rootId: z.string().default('1'),
@@ -11,9 +31,9 @@ export const settingsSchema = z.object({
   showSearchBar: z.boolean().default(true),
   searchEngine: z.string().trim().min(1).default('google'),
   showClock: z.boolean().default(false),
-  pinnedIds: z.array(z.string()).default([]),
-});
-export const pinnedSchema = z.array(z.string().min(1)).max(24);
+  pinnedIds: pinnedSchema.default([]),
+  customEngines: customEnginesSchema.default([]),
+}).transform(value => ({ ...value, searchEngine: searchEngines(value.customEngines).some(e => e.id === value.searchEngine) ? value.searchEngine : 'google' }));
 export const recentSchema = z.array(z.object({
   id: z.string().min(1),
   openedAt: z.number().int().nonnegative(),
@@ -21,11 +41,14 @@ export const recentSchema = z.array(z.object({
 export const tagsSchema = z.record(z.string(), z.array(z.string().trim().min(1).max(24)).max(8));
 export type RecentEntry = z.infer<typeof recentSchema>[number];
 export type TagMap = z.infer<typeof tagsSchema>;
-export const ENGINES = { google: 'Google', bing: '必应', baidu: '百度', duckduckgo: 'DuckDuckGo', github: 'GitHub' } as const;
 export type EngineId = keyof typeof ENGINES;
 export function engine(id: string): EngineId { return id in ENGINES ? id as EngineId : 'google'; }
-export function searchUrl(query: string, engineId: string): string {
+export function searchEngines(custom: CustomEngine[] = []) { return [...Object.entries(ENGINES).map(([id, name]) => ({ id, name })), ...custom]; }
+export function searchEngineName(id: string, custom: CustomEngine[] = []): string { return searchEngines(custom).find(item => item.id === id)?.name ?? ENGINES.google; }
+export function searchUrl(query: string, engineId: string, custom: CustomEngine[] = []): string {
   const q = encodeURIComponent(query.trim());
+  const found = custom.find(item => item.id === engineId);
+  if (found && customEngineSchema.safeParse(found).success) return found.template.replaceAll('{query}', q);
   switch (engine(engineId)) {
     case 'bing': return `https://www.bing.com/search?q=${q}`;
     case 'baidu': return `https://www.baidu.com/s?wd=${q}`;
@@ -228,6 +251,13 @@ export function moveIndex(children: Node[], sourceId: string, targetId: string, 
   const target = remaining.findIndex(child => child.id === targetId);
   if (target === -1) return -1;
   return target + (position === 'after' ? 1 : 0);
+}
+
+export function reorderPinned(ids: string[], source: string, target: string, position: 'before' | 'after'): string[] {
+  if (source === target || !ids.includes(source) || !ids.includes(target)) return [...ids];
+  const result = ids.filter(id => id !== source);
+  result.splice(result.indexOf(target) + (position === 'after' ? 1 : 0), 0, source);
+  return result;
 }
 
 export function settingsFromExport(text: string): Settings {

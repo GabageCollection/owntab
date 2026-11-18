@@ -137,6 +137,14 @@ describe('settings theme lifecycle', () => {
     expectTheme('dark');
   });
 
+  it('restores settings and auxiliary data in one plain storage write', async () => {
+    const state = settings({ ...defaults, theme: 'dark' });
+    const recent = [{ id: '1', openedAt: 100 }], tags = { '1': ['工作'] };
+    await state.save({ ...defaults, theme: 'light' }, { recent, tags });
+    expect(set).toHaveBeenCalledExactlyOnceWith({ settings: { ...defaults, theme: 'light' }, recent, tags });
+    expectTheme('light');
+  });
+
   it('removes both listeners and ignores an in-flight load after disposal', async () => {
     let resolve!: (value: unknown) => void;
     get.mockReturnValue(new Promise(done => { resolve = done; }));

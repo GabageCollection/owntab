@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
+import { checkV13 } from './v13-browser.mjs';
 
 const root = resolve('.output/chrome-mv3');
 const server = createServer(async (req, res) => {
@@ -378,15 +379,19 @@ try {
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出设置', exact: true }).click();
+  await page.getByRole('button', { name: '导出本地备份', exact: true }).click();
   const download = await downloadPromise;
-  assert.equal(download.suggestedFilename(), 'owntab-settings.json', 'settings export filename');
+  assert.equal(download.suggestedFilename(), 'owntab-backup.json', 'local backup filename');
   await page.locator('dialog input[type=file]').setInputFiles({
     name: 'settings.json', mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify({ settings: { theme: 'dark', view: 'grid', showSearchBar: true, searchEngine: 'google', pinnedIds: [] } })),
   });
-  await page.locator('.toast.success').filter({ hasText: '设置已导入' }).waitFor();
+  await page.getByRole('dialog', { name: '恢复本地数据' }).waitFor();
+  await page.getByRole('button', { name: '确认恢复', exact: true }).click();
+  await page.locator('.toast.success').filter({ hasText: '本地数据已恢复' }).waitFor();
   assert.equal(await page.locator('dialog').count(), 0, 'settings dialog closes after import');
+
+  await checkV13(page, async () => JSON.parse(JSON.stringify(mockState)), 'artifacts', value => page.evaluate(value => { window.__failStorage = value; }, value));
 
   // The prefetch can finish before mounting; bookmark changes must invalidate it.
   await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=pending-storage`);
@@ -428,7 +433,7 @@ try {
 
   assert.deepEqual(errors, []);
   assert.deepEqual(focusFailures, [], 'menu/dialog focus restoration failures');
-  console.log('Browser checks passed: 20 count/viewport combinations; card geometry and clipping; saved-light/system-dark boot with one storage read and one tree request; folder keyboard menus, async edit/move/delete dialogs and focus restoration; success/error toasts; failed API/storage save retention and unchanged settings; empty folder; palette/view-toggle/maintenance/pin/tags/recent/search/settings-transfer smoke; recent recorded on card click; maintenance delete confirmation; prefetch invalidation before/after mount, import handoff, failed-prefetch retry. Mock Chrome API used.');
+  console.log('Browser checks passed: 20 count/viewport layouts; core CRUD/focus/storage/error/startup flows; V1.3 custom-engine CRUD and shared search, IME guards, keyboard/drag pin ordering and failure retention, section and folder navigation, palette Home/End, full backup preview/cancel/failure/roundtrip/reload, narrow settings modal. Mock Chrome API used.');
 } finally {
   await browser?.close();
   await new Promise(done => server.close(done));

@@ -1,4 +1,16 @@
-# V1.2.0 本地使用版发布记录
+# owntab 本地使用版发布记录
+
+## V1.3.0 本地交付（2026-11-17）
+
+自定义搜索引擎、置顶栏手动排序、完整本地备份与恢复、键盘导航四项已实现。当前版本为 1.3.0；本地构建目录 `.output/chrome-mv3`，安装包 `.output/owntab-1.3.0-chrome.zip`。更新时保留原加载目录和扩展条目，在 chrome://extensions 重新加载，再新建标签页。
+
+类型检查、180 项单测、20 组布局与功能检查、真实 Chrome 14/14 通过。备份恢复不会改写 Chrome 书签；设置、恢复和帮助面板保持按需加载。性能明细见 PERFORMANCE.md，新增功能用户日常验收单独见 ACCEPTANCE.md。
+
+V1.3 为本地交付，不提交 Chrome Web Store。已有 GitHub v1.2.0 Release 及其资产保留原样，下面为历史记录。
+
+包检查：ZIP 大小 126760 字节，24 个文件与构建目录逐文件一致，manifest 为 1.3.0，权限仅 bookmarks/storage/favicon；ZIP 解压版已在独立 Chrome for Testing profile 中成功注册后台、打开主页及按需加载快捷键说明。SHA-256：`4c0f55ae8f9f6dc771f89abe8f31de8da07f51028e30cfde2f64f95e9c38ef41`。
+
+## V1.2.0 历史发布
 
 > 状态：V1.2.0 本地使用版已完成，GitHub Release 与 ZIP 已发布；ZIP 解压版在独立 Chrome profile 加载成功。按用户于 2026-11-16 确认的范围，通过 Chrome 开发者模式加载使用，不提交 Chrome Web Store。验收结论以 `docs/ACCEPTANCE.md` 为准。
 
@@ -69,9 +81,11 @@ Chrome Web Store 提交与审核不在本次范围内，没有待完成的商店
 
 V1.2.0 本地使用版已完成扩展图标、变更记录、打包、包内容检查和 GitHub Release。
 
-### V1.3 候选
+### V1.3 已实现
 
 - 自定义搜索引擎（用户自带模板）
 - 置顶栏手动排序
-- 书签描述/备注展示
-- 更细的键盘导航（面板内跳转、快捷键直达）
+- 完整本地备份与恢复（设置、引擎、置顶、标签、最近使用）
+- 更细的键盘导航与快捷键说明
+
+书签描述/备注为旧候选，本轮用户批准的四项以 SPEC 第十一部分为准。

@@ -2,10 +2,11 @@
 // 用法：node tests/real-chrome-check.mjs
 // 环境：独立临时 profile，不污染真实书签；无头模式，扩展经 unpacked 加载。
 import { chromium } from 'playwright-core';
-import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
+import { checkV13 } from './v13-browser.mjs';
 
 // 注意：品牌版 Google Chrome（/Applications/Google Chrome.app）自 13x 起禁止
 // 命令行 --load-extension（日志：--load-extension is not allowed in Google Chrome），
@@ -295,6 +296,45 @@ await pass('A15 维护面板删除二次确认', async () => {
 });
 
 // 11. 断网可用（模拟离线）
+await pass('A16 V1.3 引擎、置顶排序、备份恢复与键盘完整流程', async () => {
+  await page.keyboard.press('Escape');
+  await page.evaluate(async () => {
+    const tree = await chrome.bookmarks.getTree();
+    const root = tree[0].children.find(node => node.id === '1') ?? tree[0].children[0];
+    const folder = await chrome.bookmarks.create({ parentId: root.id, title: 'V1.3 键盘测试' });
+    await chrome.bookmarks.create({ parentId: folder.id, title: '子文件夹' });
+    for (let i = 0; i < 3; i++) await chrome.bookmarks.create({ parentId: root.id, title: `V1.3 样本 ${i}`, url: `https://example.com/v13/${i}` });
+    const settings = (await chrome.storage.local.get('settings')).settings ?? {};
+    await chrome.storage.local.set({ settings: { ...settings, rootId: root.id, pinnedIds: [] } });
+    const child = (await chrome.bookmarks.getChildren(root.id)).find(node => node.url);
+    await chrome.storage.local.set({ recent: [{ id: child.id, openedAt: 123 }], tags: { [child.id]: ['验收标签'] } });
+  });
+  await page.reload();
+  await page.locator('.bookmark-card').first().waitFor();
+  const before = await page.evaluate(() => chrome.bookmarks.getTree());
+  await checkV13(page, () => page.evaluate(async () => {
+    const data = await chrome.storage.local.get(['settings', 'recent', 'tags']);
+    return { settings: data.settings, recent: data.recent ?? [], tags: data.tags ?? {} };
+  }), artifacts);
+  assert.deepEqual(await page.evaluate(() => chrome.bookmarks.getTree()), before, 'local ordering and restore never edit native bookmarks');
+});
+
+await pass('A17 V1.3 本地数据跨页面同步', async () => {
+  const other = await newTab();
+  try {
+    const before = await page.locator('.pinned-link').evaluateAll(links => links.map(link => link.dataset.pinId));
+    await page.locator('.pinned-link').first().focus();
+    await page.keyboard.press('Alt+Shift+ArrowRight');
+    const expected = [before[1], before[0], ...before.slice(2)];
+    await other.waitForFunction(ids => [...document.querySelectorAll('.pinned-link')].map(link => link.dataset.pinId).join() === ids.join(), expected);
+    await page.evaluate(async id => { await chrome.storage.local.set({ tags: { [id]: ['跨页面标签'] }, recent: [{ id, openedAt: 456 }] }); }, before[0]);
+    await other.getByRole('combobox', { name: '按标签筛选' }).getByRole('option', { name: '跨页面标签', exact: true }).waitFor({ state: 'attached' });
+    await other.getByRole('button', { name: '最近使用', exact: true }).click();
+    await other.locator('.recent-row').waitFor();
+    assert.equal(await other.locator('.recent-row').count(), 1);
+  } finally { await other.close(); }
+});
+
 await pass('A11 断网后书签功能可用', async () => {
   await context.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -331,7 +371,7 @@ await pass('A12 200 项完整渲染与导航耗时记录', async () => {
     return icon?.complete && icon.naturalWidth > 0;
   });
   await page.getByRole('button', { name: '切换为列表视图' }).click();
-  await page.locator('.grid.list-view').waitFor();
+  await page.locator('.grid.list-view').first().waitFor();
   await page.locator('.bookmark-card .card-link').last().focus();
   await page.waitForFunction(() => document.activeElement === [...document.querySelectorAll('.bookmark-card .card-link')].at(-1));
   await page.getByRole('button', { name: '切换为网格视图' }).click();
@@ -356,4 +396,5 @@ if (failures.length > 0) {
 }
 
 await context.close();
+await rm(udd, { recursive: true, force: true });
 if (failCount) process.exitCode = 1;
