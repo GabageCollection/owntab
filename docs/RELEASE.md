@@ -1,10 +1,18 @@
 # owntab 本地使用版发布记录
 
+## V1.4.0 本地交付（2026-11-20）
+
+批量书签整理、标签集中管理、本地备注与检索、增强维护工具已实现。版本为 1.4.0；本地构建目录 `.output/chrome-mv3`，安装包 `.output/owntab-1.4.0-chrome.zip`。保持现有扩展目录与扩展条目，在 `chrome://extensions` 重新加载即可更新，不需要 Chrome Web Store。
+
+自动验证：202 项单测、类型检查、构建、20 组布局与模拟浏览器流程通过；真实 Chrome for Testing 17/17，包含原生 API 批量移动与删除。200 项页面内 ready/下一帧中位数为 27.5/41.2ms，真实扩展测试进程完整导航等待 87ms。详细记录见 `ACCEPTANCE.md` 和 `PERFORMANCE.md`。本地 ZIP 与解压目录在生成后逐项核验。
+
+本次为本地构建交付，不创建 GitHub Release、不推送、不提交 Chrome Web Store。用户日常配置验收待使用后记录。
+
 ## V1.3.0 本地交付（2026-11-17）
 
 自定义搜索引擎、置顶栏手动排序、完整本地备份与恢复、键盘导航四项已实现。当前版本为 1.3.0；本地构建目录 `.output/chrome-mv3`，安装包 `.output/owntab-1.3.0-chrome.zip`。更新时保留原加载目录和扩展条目，在 chrome://extensions 重新加载，再新建标签页。
 
-类型检查、180 项单测、20 组布局与功能检查、真实 Chrome 14/14 通过。备份恢复不会改写 Chrome 书签；设置、恢复和帮助面板保持按需加载。性能明细见 PERFORMANCE.md，新增功能用户日常验收单独见 ACCEPTANCE.md。
+类型检查、187 项单测、20 组布局与功能检查、真实 Chrome 15/15 通过。备份恢复不会改写 Chrome 书签；设置、恢复和帮助面板保持按需加载。性能明细见 PERFORMANCE.md，新增功能用户日常验收单独见 ACCEPTANCE.md。
 
 V1.3 为本地交付，不提交 Chrome Web Store。已有 GitHub v1.2.0 Release 及其资产保留原样，下面为历史记录。
 
@@ -64,7 +72,7 @@ V1.3 为本地交付，不提交 Chrome Web Store。已有 GitHub v1.2.0 Release
 ## E. 发布检查
 
 - [x] 真实 Chrome 人工验收已完成（ACCEPTANCE.md），性能数据已记录（2026-10-12）
-- [x] `pnpm typecheck`、`pnpm test`（160 项）、`pnpm build`、`pnpm test:browser` 全绿（2026-11-16）
+- [x] `pnpm typecheck`、`pnpm test`（187 项）、`pnpm build`、`pnpm test:browser` 全绿（2026-11-16）
 - [x] 图标与 manifest `icons` 字段补齐；导出实际尺寸 PNG
 - [x] ZIP 内容与 manifest 权限复核；ZIP 解压版已在独立 Chrome profile 成功加载
 - [x] CHANGELOG 1.2.0 与 README 版本一致

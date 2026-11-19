@@ -15,7 +15,6 @@ let media: { matches: boolean; addEventListener: ReturnType<typeof vi.fn>; remov
 let mediaListeners: Set<() => void>;
 let storageListeners: Set<StorageListener>;
 let get: ReturnType<typeof vi.fn>;
-let set: ReturnType<typeof vi.fn>;
 let removeListener: ReturnType<typeof vi.fn>;
 const active: ReturnType<typeof useSettings>[] = [];
 
@@ -47,7 +46,6 @@ beforeEach(() => {
     removeEventListener: vi.fn((_event, listener) => mediaListeners.delete(listener)),
   };
   get = vi.fn().mockResolvedValue({ settings: { theme: 'dark' } });
-  set = vi.fn().mockResolvedValue(undefined);
   removeListener = vi.fn(listener => storageListeners.delete(listener));
   vi.stubGlobal('document', { documentElement: root });
   vi.stubGlobal('matchMedia', vi.fn(() => media));
@@ -57,7 +55,7 @@ beforeEach(() => {
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
     },
     storage: {
-      local: { get, set },
+      local: { get },
       onChanged: { addListener: vi.fn(listener => storageListeners.add(listener)), removeListener },
     },
   });
@@ -101,10 +99,9 @@ describe('settings theme lifecycle', () => {
     expect(state.settings.value.theme).toBe('auto');
   });
 
-  it('applies saved settings and storage changes while ignoring other storage areas', async () => {
+  it('applies local storage changes while ignoring other storage areas', () => {
     const state = settings({ ...defaults, theme: 'dark' });
-    await state.save({ ...defaults, theme: 'light', openInNewTab: true });
-    expect(set).toHaveBeenCalledWith({ settings: { ...defaults, theme: 'light', openInNewTab: true } });
+    stored({ ...defaults, theme: 'light', openInNewTab: true });
     expectTheme('light');
     stored({ theme: 'dark' }, 'sync');
     expectTheme('light');
@@ -126,22 +123,6 @@ describe('settings theme lifecycle', () => {
     expect(state.settings.value).toEqual(defaults);
     expectTheme('dark');
     systemTheme(false);
-    expectTheme('light');
-  });
-
-  it('does not apply a failed save', async () => {
-    const state = settings({ ...defaults, theme: 'dark' });
-    set.mockRejectedValue(new Error('Write failed'));
-    await expect(state.save({ ...defaults, theme: 'light' })).rejects.toThrow('Write failed');
-    expect(state.settings.value.theme).toBe('dark');
-    expectTheme('dark');
-  });
-
-  it('restores settings and auxiliary data in one plain storage write', async () => {
-    const state = settings({ ...defaults, theme: 'dark' });
-    const recent = [{ id: '1', openedAt: 100 }], tags = { '1': ['工作'] };
-    await state.save({ ...defaults, theme: 'light' }, { recent, tags });
-    expect(set).toHaveBeenCalledExactlyOnceWith({ settings: { ...defaults, theme: 'light' }, recent, tags });
     expectTheme('light');
   });
 
@@ -173,8 +154,8 @@ describe('new tab bootstrap', () => {
     });
     await import('../src/entrypoints/newtab/main');
     await vi.waitFor(() => expect(app.mount).toHaveBeenCalledWith('#app'));
-    expect(get).toHaveBeenCalledExactlyOnceWith(['settings', 'recent', 'tags']);
-    expect(app.createApp.mock.calls[0][1]).toMatchObject({ initialSettings: { ...defaults, theme: 'dark', rootId: 'custom' }, initialRecent: [], initialTags: {} });
+    expect(get).toHaveBeenCalledExactlyOnceWith(['settings', 'recent', 'tags', 'notes']);
+    expect(app.createApp.mock.calls[0][1]).toMatchObject({ initialSettings: { ...defaults, theme: 'dark', rootId: 'custom' }, initialRecent: [], initialTags: {}, initialNotes: {} });
     expectTheme('dark');
   });
 

@@ -12,37 +12,55 @@ import assert from 'node:assert/strict';
 const extension = resolve(process.env.OWNTAB_EXT ?? '.output/chrome-mv3');
 const samples = Number(process.env.OWNTAB_PERF_SAMPLES ?? 12);
 const count = Number(process.env.OWNTAB_PERF_COUNT ?? 200);
+const folderCount = Number(process.env.OWNTAB_PERF_FOLDERS ?? 0);
+const withLocalData = process.env.OWNTAB_PERF_LOCAL_DATA === '1';
 const mode = process.env.OWNTAB_PERF_MODE ?? 'reload';
 assert(Number.isInteger(samples) && samples >= 2, 'at least two samples are required');
 assert(Number.isInteger(count) && count > 0, 'bookmark count must be positive');
+assert(Number.isInteger(folderCount) && folderCount >= 0, 'folder count must be nonnegative');
 assert(['reload', 'new-tab', 'cold-worker'].includes(mode));
 const output = resolve(process.env.OWNTAB_PERF_OUTPUT ?? 'artifacts/performance/baseline.json');
 const profile = await mkdtemp(join(tmpdir(), 'owntab-perf-'));
-const context = await chromium.launchPersistentContext(profile, {
-  executablePath: process.env.OWNTAB_CHROME ?? `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`,
-  headless: false,
+let context;
+try {
+context = await chromium.launchPersistentContext(profile, {
+  channel: 'chromium',
+  executablePath: process.env.OWNTAB_CHROME,
+  headless: process.env.OWNTAB_HEADED !== '1',
   viewport: { width: 1440, height: 900 },
   ignoreDefaultArgs: ['--disable-extensions'],
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--no-first-run', '--no-default-browser-check'],
 });
-try {
   const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
   const extensionId = new URL(worker.url()).host;
-  await worker.evaluate(async count => {
+  const fixture = await worker.evaluate(async ({ count, folderCount, withLocalData }) => {
     const tree = await chrome.bookmarks.getTree();
     const root = tree[0].children.find(n => n.id === '1') ?? tree[0].children[0];
     for (const node of root.children ?? []) {
       if (node.url) await chrome.bookmarks.remove(node.id);
       else await chrome.bookmarks.removeTree(node.id);
     }
-    for (let i = 0; i < count; i++) {
-      await chrome.bookmarks.create({ parentId: root.id, title: `性能样本 ${i + 1}`, url: `https://example.com/perf/${i}` });
+    const pinnedIds = [];
+    const tags = {};
+    for (let index = 0; index < count; index++) {
+      const node = await chrome.bookmarks.create({ parentId: root.id, title: `性能样本 ${index + 1}`, url: `https://example.com/perf/${index}` });
+      if (withLocalData && index < 24) pinnedIds.push(node.id);
+      if (withLocalData) tags[node.id] = [`类别-${index % 12}`];
     }
-    await chrome.storage.local.set({ settings: { theme: 'light', rootId: root.id } });
+    let firstFolder = '';
+    let nestedTitle = '';
+    for (let index = 0; index < folderCount; index++) {
+      const folder = await chrome.bookmarks.create({ parentId: root.id, title: `性能文件夹 ${index + 1}` });
+      const title = `目录专属样本 ${index + 1}`;
+      await chrome.bookmarks.create({ parentId: folder.id, title, url: `https://example.com/perf/folder/${index}` });
+      if (!index) { firstFolder = folder.id; nestedTitle = title; }
+    }
+    await chrome.storage.local.set({ settings: { theme: 'light', rootId: root.id, pinnedIds }, tags });
     // Finish the bookmark event batch before measuring navigation.
     await new Promise(resolve => setTimeout(resolve, 150));
-  }, count);
-  await context.addInitScript(({ count }) => {
+    return { firstFolder, nestedTitle };
+  }, { count, folderCount, withLocalData });
+  await context.addInitScript(({ count, folderCount }) => {
     if (location.protocol !== 'chrome-extension:') return;
     const metrics = window.__owntabPerf = { calls: [], longTasks: [], ready: null, frameReady: null };
     const record = (owner, name, label) => {
@@ -58,16 +76,16 @@ try {
     record(chrome.runtime, 'sendMessage', 'message');
     new PerformanceObserver(list => metrics.longTasks.push(...list.getEntries().map(e => ({ start: e.startTime, duration: e.duration })))).observe({ type: 'longtask', buffered: true });
     const observer = new MutationObserver(() => {
-      if (document.querySelectorAll('.bookmark-card').length !== count || document.querySelector('.skeleton')) return;
+      if (document.querySelectorAll('.bookmark-card').length !== count || document.querySelectorAll('.folder-card').length !== folderCount || document.querySelector('.skeleton')) return;
       const link = document.querySelector('.bookmark-card .card-link');
-      if (!link?.getAttribute('href') || document.querySelector('.status-bar[aria-busy="true"]')) return;
+      if (!link?.getAttribute('href')) return;
       metrics.ready = performance.now();
       metrics.bookmarks = document.querySelectorAll('.bookmark-card').length;
       observer.disconnect();
       requestAnimationFrame(() => requestAnimationFrame(() => { metrics.frameReady = performance.now(); }));
     });
     observer.observe(document, { childList: true, subtree: true });
-  }, { count });
+  }, { count, folderCount });
   const controlPage = await context.newPage();
   const cdp = await context.newCDPSession(controlPage);
   await cdp.send('ServiceWorker.enable');
@@ -102,18 +120,33 @@ try {
     return { min: pick(1 / sorted.length), median: pick(.5), p95: pick(.95), max: pick(1) };
   };
   const summarize = rows => Object.fromEntries(['wallMs', 'ready', 'frameReady'].map(key => [key, stats(rows.map(r => r[key]))]));
+  let interactions;
+  if (fixture.firstFolder) {
+    const startNavigation = performance.now();
+    await page.locator(`[data-node-id="${fixture.firstFolder}"]`).click();
+    await page.getByText(fixture.nestedTitle, { exact: true }).waitFor();
+    const navigationMs = performance.now() - startNavigation;
+    await page.getByRole('button', { name: '搜索书签', exact: true }).click();
+    const input = page.locator('.palette-input');
+    await input.waitFor();
+    const startSearch = performance.now();
+    await input.fill(fixture.nestedTitle);
+    await page.locator('.palette-item-title', { hasText: fixture.nestedTitle }).first().waitFor();
+    interactions = { navigationWallMs: Math.round(navigationMs), searchWallMs: Math.round(performance.now() - startSearch) };
+  }
   const report = {
-    environment: { browser: context.browser().version(), viewport: '1440x900', bookmarks: count, samples, mode, extension },
+    environment: { browser: context.browser().version(), viewport: '1440x900', bookmarks: count + folderCount, rootBookmarks: count, folders: folderCount, withLocalData, samples, mode, extension },
     // New profile; the worker is warm from seeding unless explicitly stopped.
     summary: summarize(observations),
     firstNavigation: observations[0],
     subsequentSummary: summarize(observations.slice(1)),
+    interactions,
     observations,
   };
   await mkdir(resolve(output, '..'), { recursive: true });
   await writeFile(output, JSON.stringify(report, null, 2) + '\n');
-  console.log(JSON.stringify({ output, ...report.environment, summary: report.summary, subsequentSummary: report.subsequentSummary }, null, 2));
+  console.log(JSON.stringify({ output, ...report.environment, summary: report.summary, subsequentSummary: report.subsequentSummary, interactions }, null, 2));
 } finally {
-  await context.close();
+  await context?.close();
   await rm(profile, { recursive: true, force: true });
 }

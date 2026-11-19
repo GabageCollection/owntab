@@ -141,3 +141,9 @@ OWNTAB_PERF_MODE=cold-worker OWNTAB_PERF_SAMPLES=12 node tests/performance-check
 备份逻辑单独分块，设置、恢复和帮助界面按需加载；完整主包约 201.7KB（压缩前），V1.2 约 194.4KB；完整构建约 372KB。保留并行读取、同一树快照与 favicon 懒加载，未引入新的网络启动请求或权限。该测量使用空置顶与标签，带大量本地标签/自定义引擎的场景未单独跑基准。
 
 原始文件：artifacts/performance/v13-{before,after}-{cold,warm}.json。以上是 DOM 与帧标记，不等同于浏览器真实交互时延。
+
+## V1.4 功能实现后的性能回归（2026-11-20）
+
+Chrome for Testing 153、1440×900、200 个 example.com 书签、空标签/置顶数据，`reload` 模式 12 次。页面 ready 中位数 27.5ms，下一动画帧标记中位数 41.2ms；后续样本的 p95 为 37.7ms 与 51.8ms。包含首次初始化的完整样本 p95 为 239ms 与 259.4ms，反映首个 profile 页面仍有长尾，故不以中位数宣称每次启动均低于 100ms。
+
+真实扩展完整导航检查另测得 87ms（Playwright 测试进程口径）。模拟浏览器的 20 组数量/视口布局检查通过。该组测试没有标签、备注、置顶或自定义引擎的大数据负载，后续若本地数据显著增长应增加相应性能样本。结果文件：`artifacts/performance/baseline.json`。

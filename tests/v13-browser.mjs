@@ -130,9 +130,28 @@ export async function checkV13(page, readData, artifacts, failWrite) {
   await page.locator('.palette-item').first().waitFor();
   await page.keyboard.press('End');
   assert.equal(await page.locator('.palette-item').last().getAttribute('aria-selected'), 'true');
+  assert.notEqual(await page.locator('.palette-item').last().evaluate(el => getComputedStyle(el).backgroundColor),
+    await page.locator('.palette-item').first().evaluate(el => getComputedStyle(el).backgroundColor), 'keyboard selection visibly changes the result background');
   await page.keyboard.press('Home');
   assert.equal(await page.locator('.palette-item').first().getAttribute('aria-selected'), 'true');
   await page.keyboard.press('Escape');
+
+  for (const theme of ['light', 'dark']) {
+    const contrast = await page.locator('.root-tabs [aria-current]').evaluate((element, theme) => {
+      const root = document.documentElement;
+      const original = root.dataset.theme;
+      root.dataset.theme = theme;
+      const style = getComputedStyle(element);
+      const luminance = color => color.match(/\d+/g).map(Number).map(channel => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+      const text = luminance(style.color), background = luminance(style.backgroundColor);
+      root.dataset.theme = original;
+      return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+    }, theme);
+    assert(contrast >= 4.5, `${theme} selected root contrast: ${contrast}`);
+  }
 
   // Export the persisted complete state, then preview/cancel/fail/restore it.
   await openSettings();
@@ -142,10 +161,11 @@ export async function checkV13(page, readData, artifacts, failWrite) {
   const download = await downloading;
   const buffer = await readFile(await download.path());
   const backup = JSON.parse(buffer);
-  assert.equal(backup.version, 2);
+  assert.equal(backup.version, 3);
   assert.deepEqual(backup.settings, exported.settings);
   assert.deepEqual(backup.recent, exported.recent);
   assert.deepEqual(backup.tags, exported.tags);
+  assert.deepEqual(backup.notes, exported.notes ?? {});
   assert(backup.references.length > 0);
   await page.getByRole('button', { name: '删除引擎：自定义测试', exact: true }).click();
   await save();

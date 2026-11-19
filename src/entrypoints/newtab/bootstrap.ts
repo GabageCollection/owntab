@@ -1,6 +1,6 @@
 import { createApp } from 'vue';
 import App from '../../App.vue';
-import { defaults, recentSchema, settingsSchema, tagsSchema, type RecentEntry, type Settings, type TagMap } from '../../lib/model';
+import { defaults, notesSchema, recentSchema, settingsSchema, tagsSchema, type NoteMap, type RecentEntry, type Settings, type TagMap } from '../../lib/model';
 import type { startStartup } from '../../lib/startup';
 
 /** Older builds stored arrays as {"0": ...} objects; normalize them back. */
@@ -15,6 +15,7 @@ export async function boot(startup: ReturnType<typeof startStartup>) {
   let initialSettings: Settings = { ...defaults };
   let initialRecent: RecentEntry[] = [];
   let initialTags: TagMap = {};
+  let initialNotes: NoteMap = {};
   try {
     const stored = await startup.stored;
     const parsed = settingsSchema.safeParse(stored.settings ?? {});
@@ -23,6 +24,8 @@ export async function boot(startup: ReturnType<typeof startStartup>) {
     if (recent.success) initialRecent = recent.data;
     const tags = tagsSchema.safeParse(stored.tags ?? {});
     if (tags.success) initialTags = tags.data;
+    const notes = notesSchema.safeParse(stored.notes ?? {});
+    if (notes.success) initialNotes = notes.data;
   } catch {
     // Storage failures still allow the bookmark interface to mount.
   }
@@ -31,5 +34,5 @@ export async function boot(startup: ReturnType<typeof startStartup>) {
     : initialSettings.theme;
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
-  createApp(App, { initialSettings, initialRecent, initialTags, initialBookmarks: startup.bookmarks }).mount('#app');
+  createApp(App, { initialSettings, initialRecent, initialTags, initialNotes, initialBookmarks: startup.bookmarks }).mount('#app');
 }

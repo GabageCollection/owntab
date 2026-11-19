@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import Modal from './Modal.vue';
 import { buildIndex, scoreQuery, searchUrl, type Node, type TagMap, type CustomEngine } from '../lib/model';
 
-const props = defineProps<{ tree: Node[]; pinnedIds?: string[]; tags?: TagMap; engineId?: string; customEngines: CustomEngine[]; newTab?: boolean; initialQuery?: string }>();
+const props = defineProps<{ tree: Node[]; pinnedIds?: string[]; tags?: TagMap; notes?: Record<string,string>; engineId?: string; customEngines: CustomEngine[]; newTab?: boolean; initialQuery?: string }>();
 const emit = defineEmits<{ close: []; navigate: [id: string]; open: [node: Node] }>();
 
 interface Result {
@@ -22,7 +22,7 @@ const input = ref<HTMLInputElement>();
 const list = ref<HTMLElement>();
 
 // The index is rebuilt only when the tree or tags change, not on every keystroke.
-const index = computed(() => buildIndex(props.tree, props.tags ?? {}));
+const index = computed(() => buildIndex(props.tree, props.tags ?? {}, props.notes ?? {}));
 
 const groups = computed(() => {
   const q = query.value.trim();
@@ -30,8 +30,8 @@ const groups = computed(() => {
   const matches: Result[] = [];
   const pinned = new Set(props.pinnedIds ?? []);
   for (const entry of index.value) {
-    const { node, host, path, kind, tags } = entry;
-    const score = scoreQuery(node.title ?? '', node.url ?? '', `${host} ${tags.join(' ')}`.trim(), q);
+    const { node, host, path, kind, tags, note } = entry;
+    const score = scoreQuery(node.title ?? '', node.url ?? '', `${host} ${tags.join(' ')} ${note}`.trim(), q);
     if (score !== undefined) {
       matches.push({
         key: node.id,

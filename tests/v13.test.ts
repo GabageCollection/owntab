@@ -49,8 +49,23 @@ describe('local backup and restore', () => {
     expect(plan.matched).toBe(1);
     const raw = JSON.parse(exportBackup(original, tree([bookmark('a'), bookmark('unrelated')])));
     expect(raw.references).toHaveLength(1);
+    expect(raw.version).toBe(3);
+    expect(raw.notes).toEqual({});
     expect(raw.references[0]).not.toHaveProperty('title');
     expect(raw).not.toHaveProperty('tree');
+  });
+  it('merges notes by existing bookmark and preserves local notes in legacy imports', () => {
+    const data = { ...original, notes: { a: 'Imported note' } };
+    const input = parseImport(exportBackup(data, source));
+    expect(planRestore(input, { ...local(), notes: { a: 'Current note' } }, source, 'merge').notes).toEqual({ a: 'Current note' });
+    expect(planRestore(input, local(), source, 'replace').notes).toEqual({ a: 'Imported note' });
+    const old = parseImport(JSON.stringify({ app: 'owntab', version: 2, settings: original.settings, recent: [], tags: {}, references: [] }));
+    expect(planRestore(old, { ...local(), notes: { a: 'Keep legacy note' } }, source, 'replace').notes).toEqual({ a: 'Keep legacy note' });
+  });
+  it('rejects a version 3 backup without notes and reads version 2 without notes', () => {
+    const v2 = { app: 'owntab', version: 2, settings: original.settings, recent: [], tags: {}, references: [] };
+    expect(parseImport(JSON.stringify(v2))).toMatchObject({ kind: 'backup', data: { version: 2 } });
+    expect(() => parseImport(JSON.stringify({ ...v2, version: 3 }))).toThrow('备份格式或版本不受支持');
   });
   it('remaps changed IDs by URL and skips collisions and missing bookmarks', () => {
     const input = parseImport(exportBackup(original, source));

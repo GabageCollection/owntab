@@ -22,7 +22,7 @@ export const customEnginesSchema = z.array(customEngineSchema).max(20, '最多�
   .refine(value => new Set(value.map(item => item.id)).size === value.length, '引擎标识重复');
 export type CustomEngine = z.infer<typeof customEngineSchema>;
 export const pinnedSchema = z.array(z.string().min(1)).max(24).refine(ids => new Set(ids).size === ids.length, '置顶书签重复');
-export const settingsSchema = z.object({
+export const settingsFields = z.object({
   theme: z.enum(['light', 'dark', 'auto']).default('auto'),
   rootId: z.string().default('1'),
   density: z.enum(['comfortable', 'compact']).default('comfortable'),
@@ -33,7 +33,8 @@ export const settingsSchema = z.object({
   showClock: z.boolean().default(false),
   pinnedIds: pinnedSchema.default([]),
   customEngines: customEnginesSchema.default([]),
-}).transform(value => ({ ...value, searchEngine: searchEngines(value.customEngines).some(e => e.id === value.searchEngine) ? value.searchEngine : 'google' }));
+});
+export const settingsSchema = settingsFields.transform(value => ({ ...value, searchEngine: searchEngines(value.customEngines).some(e => e.id === value.searchEngine) ? value.searchEngine : 'google' }));
 export const recentSchema = z.array(z.object({
   id: z.string().min(1),
   openedAt: z.number().int().nonnegative(),
@@ -41,6 +42,9 @@ export const recentSchema = z.array(z.object({
 export const tagsSchema = z.record(z.string(), z.array(z.string().trim().min(1).max(24)).max(8));
 export type RecentEntry = z.infer<typeof recentSchema>[number];
 export type TagMap = z.infer<typeof tagsSchema>;
+export const noteSchema = z.string().trim().max(500, '备注最多 500 字符');
+export const notesSchema = z.record(z.string(), noteSchema);
+export type NoteMap = z.infer<typeof notesSchema>;
 export type EngineId = keyof typeof ENGINES;
 export function engine(id: string): EngineId { return id in ENGINES ? id as EngineId : 'google'; }
 export function searchEngines(custom: CustomEngine[] = []) { return [...Object.entries(ENGINES).map(([id, name]) => ({ id, name })), ...custom]; }
@@ -186,9 +190,10 @@ export interface IndexEntry {
   path: string;
   kind: 'bookmark' | 'folder';
   tags: string[];
+  note: string;
 }
 /** Flatten the bookmark tree once, carrying folder paths along the way. */
-export function buildIndex(tree: Node[], tagMap: TagMap = {}): IndexEntry[] {
+export function buildIndex(tree: Node[], tagMap: TagMap = {}, noteMap: NoteMap = {}): IndexEntry[] {
   const entries: IndexEntry[] = [];
   const walk = (nodes: Node[], trail: string[]) => {
     for (const node of nodes) {
@@ -198,6 +203,7 @@ export function buildIndex(tree: Node[], tagMap: TagMap = {}): IndexEntry[] {
         path: trail.join(' / '),
         kind: node.url ? 'bookmark' : 'folder',
         tags: tagMap[node.id] ?? [],
+        note: noteMap[node.id] ?? '',
       });
       if (node.children?.length) walk(node.children, node.title ? [...trail, node.title] : trail);
     }
@@ -241,6 +247,20 @@ export function normalizeTags(input: string | string[]): string[] {
     .slice(0, 8);
 }
 
+export function tagCounts(tags: TagMap, ids: ReadonlySet<string>) {
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const [id, names] of Object.entries(tags)) {
+    if (!ids.has(id)) continue;
+    for (const name of names) {
+      const key = name.toLowerCase();
+      const row = counts.get(key) ?? { name, count: 0 };
+      row.count++;
+      counts.set(key, row);
+    }
+  }
+  return [...counts.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
 export function pruneTags(tags: TagMap, tree: Node[]): TagMap {
   const ids = new Set(flattenBookmarks(tree).map(node => node.id));
   return Object.fromEntries(Object.entries(tags).filter(([id, values]) => ids.has(id) && values.length));
@@ -281,24 +301,51 @@ export function settingsToExport(settings: Settings): string {
 
 export type LinkStatus = 'ok' | 'broken' | 'unknown';
 export function normalizeLinkResult(status: number, ok: boolean): LinkStatus {
-  if (status === 0) return 'unknown';
-  if (status === 405 || status === 501) return 'unknown';
-  return ok || (status >= 200 && status < 400) ? 'ok' : 'broken';
+  if (status === 404 || status === 410) return 'broken';
+  return ok || (status >= 200 && status < 400) ? 'ok' : 'unknown';
 }
-export async function* checkLinks(nodes: Node[], options: { timeoutMs?: number; fetchImpl?: typeof fetch } = {}): AsyncGenerator<{ node: Node; status: LinkStatus }> {
+export async function* checkLinks(nodes: Node[], options: { timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal } = {}): AsyncGenerator<{ node: Node; status: LinkStatus }> {
   const timeoutMs = options.timeoutMs ?? 8000;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const jobs = nodes.map(async node => {
+  const batch = new AbortController();
+  const cancel = () => batch.abort();
+  if (options.signal?.aborted) return;
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  async function check(node: Node): Promise<{ node: Node; status: LinkStatus }> {
+    const url = safeHref(node.url);
+    if (!url || batch.signal.aborted) return { node, status: 'unknown' };
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const abort = () => controller.abort();
+    batch.signal.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, timeoutMs);
     try {
-      const response = await fetchImpl(node.url!, { signal: controller.signal });
+      const response = await fetchImpl(url, { method: 'HEAD', credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal });
       return { node, status: normalizeLinkResult(response.status, response.ok) };
     } catch {
-      return { node, status: 'broken' as const };
+      return { node, status: 'unknown' };
     } finally {
       clearTimeout(timer);
+      batch.signal.removeEventListener('abort', abort);
     }
-  });
-  for (const job of jobs) yield await job;
+  }
+  const pending = new Map<number, Promise<{ index: number; result: Awaited<ReturnType<typeof check>> }>>();
+  let cursor = 0;
+  function enqueue() {
+    if (cursor >= nodes.length || batch.signal.aborted) return;
+    const index = cursor++;
+    pending.set(index, check(nodes[index]).then(result => ({ index, result })));
+  }
+  try {
+    for (let count = 0; count < 4; count++) enqueue();
+    while (pending.size && !batch.signal.aborted) {
+      const { index, result } = await Promise.race(pending.values());
+      pending.delete(index);
+      if (batch.signal.aborted) return;
+      enqueue();
+      yield result;
+    }
+  } finally {
+    cancel();
+    options.signal?.removeEventListener('abort', cancel);
+  }
 }

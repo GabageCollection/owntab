@@ -30,7 +30,7 @@ export function startStartup() {
   }
   let stored: Promise<Record<string, unknown>>;
   try {
-    stored = chrome.storage.local.get(['settings', 'recent', 'tags']).catch(() => ({}));
+    stored = chrome.storage.local.get(['settings', 'recent', 'tags', 'notes']).catch(() => ({}));
   } catch {
     stored = Promise.resolve({});
   }

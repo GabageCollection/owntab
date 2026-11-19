@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { defaults, settingsSchema, toPlain, type Settings, type RecentEntry, type TagMap } from '../lib/model';
+import { defaults, settingsSchema, type Settings } from '../lib/model';
 
 export function useSettings(initialSettings?: Settings) {
   const settings = ref<Settings>(initialSettings ? { ...initialSettings } : { ...defaults });
@@ -31,13 +31,6 @@ export function useSettings(initialSettings?: Settings) {
     }
   }
 
-  async function save(value: Settings, localData?: { recent: RecentEntry[]; tags: TagMap }) {
-    const parsed = settingsSchema.parse(value);
-    // The parsed value may still be a reactive proxy; store a plain object.
-    await chrome.storage.local.set(toPlain({ ...localData, settings: parsed }));
-    update(parsed);
-  }
-
   function changed(changes: Record<string, chrome.storage.StorageChange>, area: string) {
     if (area === 'local' && changes.settings) update(changes.settings.newValue);
   }
@@ -52,5 +45,5 @@ export function useSettings(initialSettings?: Settings) {
   }
 
   if (ready) apply();
-  return { settings, load, save, dispose };
+  return { settings, load, dispose };
 }

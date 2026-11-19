@@ -5,7 +5,7 @@ import ModalActions from './ModalActions.vue';
 import { domain, pathLabels, recentNodes, type Node, type RecentEntry } from '../lib/model';
 
 const props = defineProps<{ tree: Node[]; entries: RecentEntry[] }>();
-const emit = defineEmits<{ close: []; open: [node: Node]; navigate: [id: string] }>();
+const emit = defineEmits<{ close: []; open: [node: Node]; locate: [node: Node] }>();
 const items = computed(() => recentNodes(props.tree, props.entries).map(item => ({
   ...item,
   host: domain(item.node.url),
@@ -32,7 +32,7 @@ function relative(timestamp: number) {
             <span class="recent-title">{{ item.node.title || item.host || '未命名书签' }}</span>
             <span class="recent-meta muted">{{ item.path || item.host }} · {{ relative(item.openedAt) }}</span>
           </button>
-          <button class="button" type="button" @click="emit('navigate', item.node.parentId ?? '')">定位</button>
+          <button class="button" type="button" @click="emit('locate', item.node)">定位</button>
         </div>
       </div>
     </div>

@@ -3,7 +3,9 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
 import { checkV13 } from './v13-browser.mjs';
+import { checkV14 } from './v14-browser.mjs';
 
 const root = resolve('.output/chrome-mv3');
 const server = createServer(async (req, res) => {
@@ -11,14 +13,14 @@ const server = createServer(async (req, res) => {
     const path = resolve(root, '.' + new URL(req.url, 'http://localhost').pathname);
     if (!path.startsWith(root + '/')) throw Error('Invalid asset path');
     const data = await readFile(path);
-    res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' })[extname(path)] ?? 'application/octet-stream');
+    res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' })[extname(path)] ?? 'application/octet-stream');
     res.end(data);
   } catch { res.writeHead(404); res.end(); }
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 let browser;
 try {
-  browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+  browser = await chromium.launch({ channel: 'chromium', executablePath: process.env.OWNTAB_CHROME, headless: true });
   const page = await browser.newPage({ colorScheme: 'dark', reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -26,15 +28,69 @@ try {
   await page.route('**://example.com/**', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>stub</title>' }));
   // The mock storage lives in Node so it survives navigation to another origin,
   // matching the cross-origin behavior of the real chrome.storage.local.
-  const mockState = { settings: { theme: 'light', rootId: '1', density: 'comfortable', openInNewTab: false }, recent: [], tags: {} };
+  const mockState = { settings: { theme: 'light', rootId: '1', density: 'comfortable', openInNewTab: false }, recent: [], tags: {}, notes: {} };
   await page.exposeFunction('__owntabRead', () => JSON.parse(JSON.stringify(mockState)));
-  await page.exposeFunction('__owntabWrite', next => { Object.assign(mockState, JSON.parse(JSON.stringify(next))); });
+  const event = () => ({ addListener() {}, removeListener() {} });
+  let dispatch;
+  let currentTree, failTree, failStorage, changes;
+  const getTree = async () => {
+    if (failTree) throw new Error('模拟书签读取失败');
+    return currentTree;
+  };
+  const chrome = {
+    runtime: { id: 'test-extension', onMessage: { addListener: listener => { dispatch = listener; } } },
+    bookmarks: {
+      getTree, get: async id => {
+        const scan = nodes => nodes.flatMap(node => node.id === id ? [node] : scan(node.children ?? []));
+        return scan(await getTree());
+      },
+      getSubTree: async id => {
+        const scan = nodes => nodes.flatMap(node => node.id === id ? [node] : scan(node.children ?? []));
+        return scan(await getTree());
+      },
+      move: async () => {}, remove: async () => {}, removeTree: async () => {},
+      ...Object.fromEntries(['onCreated', 'onRemoved', 'onChanged', 'onMoved', 'onChildrenReordered', 'onImportBegan', 'onImportEnded'].map(name => [name, event()])),
+    },
+    storage: { local: {
+      get: async () => structuredClone(mockState),
+      set: async next => {
+        if (failStorage) throw new Error('模拟存储失败');
+        changes = Object.fromEntries(Object.entries(next).map(([key, value]) => [key, { newValue: value }]));
+        Object.assign(mockState, JSON.parse(JSON.stringify(next)));
+      },
+    } },
+  };
+  runInNewContext(await readFile(resolve(root, 'background.js'), 'utf8'), { chrome, Error, TextEncoder, URL, console });
+  let queued = Promise.resolve();
+  await page.exposeFunction('__owntabLocal', (request, tree, failures) => {
+    const job = queued.then(async () => {
+      currentTree = tree;
+      ({ failTree, failStorage } = failures);
+      changes = {};
+      const reply = await new Promise(resolve => dispatch(request, { id: chrome.runtime.id }, resolve));
+      return { reply, changes };
+    });
+    queued = job;
+    return job;
+  });
+  await page.exposeFunction('__owntabBatch', (request, tree, failures) => {
+    const job = queued.then(async () => {
+      currentTree = tree;
+      ({ failTree, failStorage } = failures);
+      const reply = await new Promise(resolve => dispatch(request, { id: chrome.runtime.id }, resolve));
+      return reply;
+    });
+    queued = job;
+    return job;
+  });
   await page.addInitScript(() => {
     let count = 20;
     let settings = { theme: 'light', rootId: '1', density: 'comfortable', openInNewTab: false };
     let recent = [];
     let tags = {};
+    let notes = {};
     const listeners = [];
+    const storageListeners = new Set();
     const longTitle = '这是一个很长的标题用于检查截断和布局边界'.repeat(20);
     const children = () => count === 0 ? [] : [
       { id: '10', parentId: '1', title: '设计资源 ' + longTitle, children: [
@@ -54,14 +110,8 @@ try {
       { id: '1', parentId: '0', title: 'Bookmarks bar', children: children() },
       { id: '2', parentId: '0', title: 'Other bookmarks', children: [] },
     ] }];
-    const find = (nodes, id) => {
-      for (const node of nodes) {
-        if (node.id === id) return node;
-        const nested = find(node.children ?? [], id);
-        if (nested) return nested;
-      }
-    };
     window.__failStorage = false;
+    window.__failTree = false;
     window.__storageGets = 0;
     window.__treeRequests = 0;
     window.__emitChanged = message => listeners.forEach(fn => fn(message));
@@ -89,13 +139,23 @@ try {
         getURL: () => 'http://127.0.0.1/missing-icon',
         onMessage: { addListener: fn => listeners.push(fn), removeListener: fn => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); } },
         sendMessage: async req => {
+          if (req.scope === 'owntab-batch') return window.__owntabBatch(req, tree(), { failTree: window.__failTree, failStorage: window.__failStorage });
+          if (req.scope === 'owntab-local') {
+            const { reply, changes } = await window.__owntabLocal(req, tree(), { failTree: window.__failTree, failStorage: window.__failStorage });
+            if (changes.settings) settings = changes.settings.newValue;
+            if (changes.recent) recent = changes.recent.newValue;
+            if (changes.tags) tags = changes.tags.newValue;
+            if (changes.notes) notes = changes.notes.newValue;
+            for (const listener of storageListeners) listener(changes, 'local');
+            return reply;
+          }
           if (req.action === 'tree') {
             window.__treeRequests++;
             const snapshot = tree();
             if (window.__treeRequests === 1 && startupCase === 'pending-tree') {
               await new Promise(resolve => { window.__releaseTree = resolve; });
             }
-            if (window.__treeRequests === 1 && startupCase === 'failed-tree') return { ok: false, error: '首次书签读取失败' };
+            if (window.__failTree || (window.__treeRequests === 1 && startupCase === 'failed-tree')) return { ok: false, error: '首次书签读取失败' };
             return { ok: true, data: snapshot };
           }
           if (req.action === 'children') throw Error('directory must use the tree snapshot');
@@ -110,17 +170,10 @@ try {
             if (startupCase === 'pending-storage') await new Promise(resolve => { window.__releaseStorage = resolve; });
             const saved = await window.__owntabRead();
             settings = saved.settings; recent = saved.recent; tags = saved.tags;
-            return { settings: { ...settings }, recent: [...recent], tags: { ...tags } };
-          },
-          set: async value => {
-            if (window.__failStorage) throw Error('模拟存储失败');
-            if (value.settings) settings = { ...value.settings };
-            if (value.recent) recent = [...value.recent];
-            if (value.tags) tags = { ...value.tags };
-            await window.__owntabWrite({ settings, recent, tags });
+            return { settings: { ...settings }, recent: [...recent], tags: { ...tags }, notes: { ...notes } };
           },
         },
-        onChanged: { addListener: () => {}, removeListener: () => {} },
+        onChanged: { addListener: fn => storageListeners.add(fn), removeListener: fn => storageListeners.delete(fn) },
       },
     };
   });
@@ -352,7 +405,8 @@ try {
   await page.getByRole('button', { name: '最近使用', exact: true }).click();
   await page.getByRole('dialog', { name: '最近使用', exact: true }).waitFor();
   assert.equal(await page.locator('.recent-row').count(), 1, 'recent panel lists the opened bookmark');
-  await page.keyboard.press('Escape');
+  await page.getByRole('dialog', { name: '最近使用', exact: true }).getByRole('button', { name: '定位' }).click();
+  await page.waitForFunction(() => document.activeElement?.matches('.card-link[data-node-id="20"]') && !document.querySelector('dialog[open]'));
   await page.keyboard.press('/');
   await page.locator('.palette-input').fill('设计资源');
   await page.waitForSelector('.palette-group-label');
@@ -371,6 +425,9 @@ try {
   await page.locator('.maintenance-body').waitFor();
   const maintenanceDelete = page.locator('.maintenance-row .button.danger').first();
   assert.equal(await maintenanceDelete.count(), 1, 'maintenance panel offers a delete action');
+  await page.locator('.maintenance-row').first().getByRole('button', { name: '定位' }).click();
+  await page.waitForFunction(() => document.activeElement?.matches('.card-link[data-node-id="21"]') && !document.querySelector('dialog[open]'));
+  await page.getByRole('button', { name: '书签维护' }).click();
   await maintenanceDelete.click();
   await page.getByRole('dialog', { name: '删除确认', exact: true }).waitFor();
   assert((await page.locator('dialog').innerText()).includes('此操作不可撤销'), 'maintenance delete asks for confirmation');
@@ -392,6 +449,7 @@ try {
   assert.equal(await page.locator('dialog').count(), 0, 'settings dialog closes after import');
 
   await checkV13(page, async () => JSON.parse(JSON.stringify(mockState)), 'artifacts', value => page.evaluate(value => { window.__failStorage = value; }, value));
+  await checkV14(page, async () => JSON.parse(JSON.stringify(mockState)), 'artifacts');
 
   // The prefetch can finish before mounting; bookmark changes must invalidate it.
   await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=pending-storage`);
@@ -427,9 +485,54 @@ try {
 
   await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html?startupCase=failed-tree`);
   await page.getByRole('alert').filter({ hasText: '首次书签读取失败' }).waitFor();
+  const beforeUnavailable = structuredClone(mockState);
+  await page.evaluate(() => { window.__failTree = true; });
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  const settingsDialog = page.getByRole('dialog', { name: '设置', exact: true });
+  await settingsDialog.getByRole('button', { name: '导出本地备份' }).click();
+  await settingsDialog.getByRole('alert').filter({ hasText: '模拟书签读取失败' }).waitFor();
+  await settingsDialog.getByLabel('选择本地备份').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from('{') });
+  await settingsDialog.getByRole('alert').filter({ hasText: '文件不是有效的 JSON' }).waitFor();
+  await settingsDialog.getByLabel('选择本地备份').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from('{"theme":"light"}') });
+  await settingsDialog.getByRole('alert').filter({ hasText: '模拟书签读取失败' }).waitFor();
+  assert.deepEqual(mockState, beforeUnavailable, 'failed tree read cannot write any local data');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { window.__failTree = false; });
   await page.getByRole('button', { name: '重试', exact: true }).click();
   await page.locator('.bookmark-card').first().waitFor();
   assert.equal(await page.evaluate(() => window.__treeRequests), 2, 'retry must not reuse failed prefetch');
+
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await settingsDialog.getByLabel('选择本地备份').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from('{"theme":"light"}') });
+  const restoreDialog = page.getByRole('dialog', { name: '恢复本地数据' });
+  await restoreDialog.waitFor();
+  await page.evaluate(() => { window.__failTree = true; });
+  await restoreDialog.getByRole('button', { name: '确认恢复' }).click();
+  await restoreDialog.getByRole('alert').filter({ hasText: '模拟书签读取失败' }).waitFor();
+  assert.deepEqual(mockState, beforeUnavailable, 'failed confirm-time tree read preserves data and preview');
+
+  mockState.settings = { ...mockState.settings, showClock: true };
+  await page.goto(`http://127.0.0.1:${server.address().port}/newtab.html`);
+  await page.locator('.clock').waitFor();
+  await page.locator('.brand-mark').evaluate(image => image.decode());
+  assert.equal(await page.locator('.brand-name').textContent(), 'OwnTab');
+  for (const width of [1440, 390, 320, 280]) {
+    await page.setViewportSize({ width, height: 900 });
+    const fits = await page.locator('.topbar').evaluate(header => {
+      const bounds = header.getBoundingClientRect();
+      const brand = header.querySelector('.brand').getBoundingClientRect();
+      const actions = header.querySelector('.top-actions').getBoundingClientRect();
+      const overlaps = brand.left < actions.right && actions.left < brand.right && brand.top < actions.bottom && actions.top < brand.bottom;
+      return !overlaps && document.documentElement.scrollWidth === innerWidth &&
+        [...header.querySelectorAll('.brand-mark, .brand-copy, .clock, button')].every(element => {
+          const rect = element.getBoundingClientRect();
+          return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+        });
+    });
+    assert(fits, `brand and actions fit with clock enabled at ${width}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: 'artifacts/owntab-header.png', clip: { x: 0, y: 0, width: 1440, height: 160 } });
 
   assert.deepEqual(errors, []);
   assert.deepEqual(focusFailures, [], 'menu/dialog focus restoration failures');

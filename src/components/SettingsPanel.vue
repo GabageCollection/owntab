@@ -37,7 +37,7 @@ function picked(event: Event) {
   <Modal title="设置" :busy="busy" @close="emit('close')"><form @submit.prevent="emit('submit')">
     <div class="modal-body settings-fields">
       <RootSwitcher v-model="draft.rootId" :roots="roots" :disabled="busy"/>
-      <label class="field">主题<select v-model="draft.theme" :disabled="busy"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      <label class="field">主题<select v-model="draft.theme" aria-label="主题" :disabled="busy"><option value="auto">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <label class="field">列表密度<select v-model="draft.density" :disabled="busy"><option value="comfortable">舒适</option><option value="compact">紧凑</option></select></label>
       <label class="field">默认视图<select v-model="draft.view" :disabled="busy"><option value="grid">网格</option><option value="list">列表</option></select></label>
       <label><input v-model="draft.openInNewTab" type="checkbox" :disabled="busy"> 在新标签页打开书签</label>

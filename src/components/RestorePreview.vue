@@ -2,16 +2,16 @@
 import { computed, ref } from 'vue';
 import Modal from './Modal.vue';
 import ModalActions from './ModalActions.vue';
-import { planRestore, type ImportData, type LocalData } from '../lib/backup';
+import { planRestore, restoreExpectation, type ImportData, type LocalData, type RestoreMode } from '../lib/backup';
 import type { Node } from '../lib/model';
 const props = defineProps<{ input: ImportData; current: LocalData; tree: Node[]; busy: boolean; error: string }>();
-const emit = defineEmits<{ close: []; restore: [data: ReturnType<typeof planRestore>] }>();
-const mode = ref<'merge' | 'replace'>('merge');
+const emit = defineEmits<{ close: []; restore: [mode: RestoreMode, expected: string] }>();
+const mode = ref<RestoreMode>('merge');
 const plan = computed(() => planRestore(props.input, props.current, props.tree, mode.value));
 </script>
 <template>
   <Modal title="恢复本地数据" :busy="busy" @close="emit('close')">
-    <form @submit.prevent="emit('restore', plan)">
+    <form @submit.prevent="emit('restore', mode, restoreExpectation(current, plan))">
       <div class="modal-body settings-fields">
         <p>{{ input.kind === 'backup' ? '备份包含设置、自定义引擎、置顶顺序、最近使用和标签。' : '这是旧版设置文件，仅恢复设置与置顶，不改变标签和最近使用。' }}</p>
         <label class="field">恢复方式<select v-model="mode" aria-label="恢复方式" :disabled="busy"><option value="merge">合并本地数据</option><option value="replace">替换本地数据</option></select></label>

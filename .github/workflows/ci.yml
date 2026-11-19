@@ -35,3 +35,12 @@ jobs:
 
       - name: Build extension
         run: pnpm build
+
+      - name: Install Chromium
+        run: pnpm exec playwright-core install --with-deps chromium
+
+      - name: Browser interaction checks
+        run: node tests/browser-check.mjs
+
+      - name: Real extension regression
+        run: node tests/real-chrome-check.mjs

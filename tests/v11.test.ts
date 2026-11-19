@@ -85,12 +85,14 @@ describe('link checking', () => {
   it('normalizes fetch results into statuses', () => {
     expect(normalizeLinkResult(200, true)).toBe('ok');
     expect(normalizeLinkResult(404, false)).toBe('broken');
+    expect(normalizeLinkResult(410, false)).toBe('broken');
+    for (const status of [401, 403, 429, 500, 503]) expect(normalizeLinkResult(status, false)).toBe('unknown');
     expect(normalizeLinkResult(0, false)).toBe('unknown');
     expect(normalizeLinkResult(405, false)).toBe('unknown');
     expect(normalizeLinkResult(301, true)).toBe('ok');
   });
 
-  it('reports broken for fetch failures and ok for successes', async () => {
+  it('reports unknown for unreadable responses and ok for successes', async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('dead')) throw new Error('network down');
@@ -101,6 +103,29 @@ describe('link checking', () => {
     for await (const result of checkLinks(nodes, { fetchImpl })) results.push(result);
     expect(results).toHaveLength(2);
     expect(results.find(r => r.node.id === 'ok1')?.status).toBe('ok');
-    expect(results.find(r => r.node.id === 'bad1')?.status).toBe('broken');
+    expect(results.find(r => r.node.id === 'bad1')?.status).toBe('unknown');
+    expect(fetchImpl).toHaveBeenCalledWith('https://live.example.com/', expect.objectContaining({ method: 'HEAD', credentials: 'omit' }));
+  });
+
+  it('limits concurrency, yields completed requests first, and aborts outstanding requests on cancel', async () => {
+    const nodes = Array.from({ length: 8 }, (_, index) => bookmark(String(index), 'Sample', `https://example.com/${index}`));
+    const complete: (() => void)[] = [];
+    const signals: AbortSignal[] = [];
+    const controller = new AbortController();
+    const fetchImpl: typeof fetch = (_url, init) => new Promise((resolve, reject) => {
+      const signal = init!.signal!;
+      signals.push(signal);
+      signal.addEventListener('abort', reject, { once: true });
+      complete.push(() => resolve(new Response(null, { status: 404 })));
+    });
+    const run = checkLinks(nodes, { fetchImpl, signal: controller.signal });
+    const first = run.next();
+    expect(signals).toHaveLength(4);
+    complete[2]();
+    expect(await first).toMatchObject({ value: { node: { id: '2' }, status: 'broken' } });
+    expect(signals).toHaveLength(5);
+    controller.abort();
+    expect((await run.next()).done).toBe(true);
+    expect(signals.filter(signal => signal.aborted)).toHaveLength(4);
   });
 });

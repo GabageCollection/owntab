@@ -1,15 +1,34 @@
 import { z } from 'zod';
-import { defaults, defaultRoot, normalizeTags, recentSchema, rootsOf, settingsSchema, tagsSchema, type Node, type RecentEntry, type Settings, type TagMap } from './model';
+import { defaults, defaultRoot, normalizeTags, notesSchema, recentSchema, rootsOf, settingsSchema, tagsSchema, type Node, type NoteMap, type RecentEntry, type Settings, type TagMap } from './model';
 
 const referenceSchema = z.object({ id: z.string().min(1), url: z.string().max(8192), path: z.array(z.string()).max(100) });
-const backupSchema = z.object({
+const backupV2 = z.object({
   app: z.literal('owntab'), version: z.literal(2),
   settings: settingsSchema, recent: recentSchema, tags: tagsSchema,
   references: z.array(referenceSchema).max(10000),
 });
-export type Backup = z.infer<typeof backupSchema>;
-export interface LocalData { settings: Settings; recent: RecentEntry[]; tags: TagMap }
+const backupV3 = z.object({
+  app: z.literal('owntab'), version: z.literal(3),
+  settings: settingsSchema, recent: recentSchema, tags: tagsSchema, notes: notesSchema,
+  references: z.array(referenceSchema).max(10000),
+});
+const backupSchema = z.union([backupV2, backupV3]);
+type BackupPayload = z.infer<typeof backupV2> | z.infer<typeof backupV3>;
+export type Backup = BackupPayload;
+export interface LocalData { settings: Settings; recent: RecentEntry[]; tags: TagMap; notes?: NoteMap }
 export type ImportData = { kind: 'backup'; data: Backup } | { kind: 'settings'; settings: Settings };
+export type RestoreMode = 'merge' | 'replace';
+export type RestorePlan = ReturnType<typeof planRestore>;
+export interface BackupSnapshot { local: LocalData; tree: Node[] }
+
+export function restoreExpectation(local: LocalData, plan: RestorePlan): string {
+  return JSON.stringify({ local: { ...local, notes: local.notes ?? {} }, plan });
+}
+
+export function requireBookmarkTree(tree: Node[]): Node[] {
+  if (!Array.isArray(tree) || !rootsOf(tree).length) throw new Error('无法读取完整书签，请重试');
+  return tree;
+}
 
 function bookmarkReferences(tree: Node[]) {
   const references: Backup['references'] = [];
@@ -24,9 +43,10 @@ function bookmarkReferences(tree: Node[]) {
 }
 
 export function exportBackup(local: LocalData, tree: Node[]): string {
-  const ids = new Set([...local.settings.pinnedIds, ...local.recent.map(item => item.id), ...Object.keys(local.tags)]);
+  requireBookmarkTree(tree);
+  const ids = new Set([...local.settings.pinnedIds, ...local.recent.map(item => item.id), ...Object.keys(local.tags), ...Object.keys(local.notes ?? {})]);
   const references = bookmarkReferences(tree).filter(node => ids.has(node.id));
-  const text = JSON.stringify(backupSchema.parse({ app: 'owntab', version: 2, ...local, references }), null, 2);
+  const text = JSON.stringify(backupSchema.parse({ app: 'owntab', ...local, version: 3, notes: local.notes ?? {}, references }), null, 2);
   if (new TextEncoder().encode(text).length > 2 * 1024 * 1024) throw new Error('备份数据超过 2 MB，无法导出为可恢复文件');
   return text;
 }
@@ -52,7 +72,8 @@ export function parseImport(text: string): ImportData {
 
 // Match only existing bookmarks: same ID+URL, unique URL, or unique URL+folder path.
 // Ambiguous matches are skipped; native bookmark records are never created/edited.
-export function planRestore(input: ImportData, current: LocalData, tree: Node[], mode: 'merge' | 'replace') {
+export function planRestore(input: ImportData, current: LocalData, tree: Node[], mode: RestoreMode) {
+  requireBookmarkTree(tree);
   const nodes = bookmarkReferences(tree);
   const byId = new Map(nodes.map(node => [node.id, node]));
   const byUrl = new Map<string, Backup['references']>();
@@ -66,9 +87,10 @@ export function planRestore(input: ImportData, current: LocalData, tree: Node[],
   }
   const mapping = new Map<string, string>();
   const imported = input.kind === 'backup' ? input.data : null;
+  const importedNotes = imported && 'notes' in imported ? imported.notes : undefined;
   const sourceSettings = input.kind === 'backup' ? input.data.settings : input.settings;
   const ids = new Set<string>(imported
-    ? [...imported.settings.pinnedIds, ...imported.recent.map(item => item.id), ...Object.keys(imported.tags)]
+    ? [...imported.settings.pinnedIds, ...imported.recent.map(item => item.id), ...Object.keys(imported.tags), ...Object.keys(importedNotes ?? {})]
     : sourceSettings.pinnedIds);
   if (imported) {
     const refs = new Map(imported.references.map(ref => [ref.id, ref]));
@@ -86,6 +108,17 @@ export function planRestore(input: ImportData, current: LocalData, tree: Node[],
   const settings = settingsSchema.parse({ ...sourceSettings, pinnedIds: combinedPins.slice(0, 24), rootId: defaultRoot(rootsOf(tree), sourceSettings.rootId)?.id ?? defaults.rootId });
   let recent = [...current.recent];
   let tags = { ...current.tags };
+  let notes: NoteMap | undefined = { ...(current.notes ?? {}) };
+  if (importedNotes) {
+    if (mode === 'replace') notes = {};
+    for (const [id, note] of Object.entries(importedNotes)) {
+      const mapped = mapping.get(id);
+      if (mapped && note && !Object.hasOwn(notes ?? {}, mapped)) {
+        notes ??= {};
+        notes[mapped] = note;
+      }
+    }
+  }
   if (imported) {
     tags = mode === 'merge' ? Object.fromEntries(Object.entries(current.tags).filter(([id]) => byId.has(id))) : {};
     for (const [id, values] of Object.entries(imported.tags)) {
@@ -98,5 +131,5 @@ export function planRestore(input: ImportData, current: LocalData, tree: Node[],
     })].filter(item => byId.has(item.id)).sort((a, b) => b.openedAt - a.openedAt);
     recent = entries.filter((item, i) => entries.findIndex(other => other.id === item.id) === i).slice(0, 50);
   }
-  return { settings, recent, tags, matched: mapping.size, skipped: ids.size - mapping.size, truncatedPins: Math.max(0, combinedPins.length - 24) };
+  return { settings, recent, tags, ...(notes ? { notes } : {}), matched: mapping.size, skipped: ids.size - mapping.size, truncatedPins: Math.max(0, combinedPins.length - 24) };
 }
